@@ -131,6 +131,12 @@
         "title": "Download Waza Binary",
         "category": "Chat Customizations Evaluations",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "chatCustomizationsEvaluations.openWazaUserGuide",
+        "title": "Open Waza User Guide",
+        "category": "Chat Customizations Evaluations",
+        "icon": "$(book)"
       }
     ],
     "menus": {
@@ -164,6 +170,11 @@
         },
         {
           "command": "chatCustomizationsEvaluations.wazaDownloadBinary",
+          "group": "inline",
+          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
+        },
+        {
+          "command": "chatCustomizationsEvaluations.openWazaUserGuide",
           "group": "inline",
           "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
         }

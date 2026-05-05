@@ -24,6 +24,127 @@ interface LLMProxyResponse {
 
 const LLMRequestType = new RequestType<LLMProxyRequest, LLMProxyResponse, void>('chatCustomizationsEvaluations/llmRequest');
 const urisWithDiagnostics = new Set<string>();
+const WAZA_USER_GUIDE_FALLBACK = `# Waza User Guide
+
+This guide explains how to use waza from the Chat Customizations Evaluations extension.
+
+## What Is Waza?
+
+Waza is a CLI for evaluating AI customizations (skills, agents, prompts, and instructions) using structured eval suites.
+
+With this extension, you can:
+- Create a starter eval scaffold for a customization.
+- Run the eval and save the results to a JSON file.
+- Open and review the saved results.
+- Download and configure a local waza binary.
+
+## Main Commands
+
+- Chat Customizations Evaluations: Create Waza Eval Scaffold
+- Chat Customizations Evaluations: Run Waza Evaluation
+- Chat Customizations Evaluations: Download Waza Binary
+- Chat Customizations Evaluations: Open Waza User Guide
+
+## Typical Flow
+
+1. Open a customization file (for example, SKILL.md).
+2. Run Create Waza Eval Scaffold.
+3. Review generated eval files and tasks.
+4. Run Waza Evaluation.
+5. Open results from the notification action or output panel link.
+
+## Run Command Used By Extension
+
+\`waza run <eval.yaml> --context-dir <skill-dir> --output <results-file.json>\`
+
+## Validator Types (8) With Examples
+
+### 1. \`code\`
+
+\`\`\`yaml
+- type: code
+  name: has_meaningful_output
+  config:
+    assertions:
+      - "len(output) > 20"
+\`\`\`
+
+### 2. \`text\`
+
+\`\`\`yaml
+- type: text
+  name: no_runtime_errors
+  config:
+    regex_not_match:
+      - "(?i)error|exception|traceback"
+\`\`\`
+
+### 3. \`model\`
+
+\`\`\`yaml
+- type: model
+  name: judge_explanation_quality
+  config:
+    rubric: "Score 1-5 for clarity, correctness, and completeness."
+    pass_threshold: 4
+\`\`\`
+
+### 4. \`regex\`
+
+\`\`\`yaml
+- type: regex
+  name: mentions_base_case
+  config:
+    must_match:
+      - "(?i)base case"
+\`\`\`
+
+### 5. \`file\`
+
+\`\`\`yaml
+- type: file
+  name: report_file_created
+  config:
+    path: "artifacts/report.json"
+    must_exist: true
+\`\`\`
+
+### 6. \`keyword\`
+
+\`\`\`yaml
+- type: keyword
+  name: contains_required_terms
+  config:
+    include:
+      - recursion
+      - factorial
+\`\`\`
+
+### 7. \`json\`
+
+\`\`\`yaml
+- type: json
+  name: valid_structured_output
+  config:
+    required_keys:
+      - summary
+      - confidence
+\`\`\`
+
+### 8. \`script\`
+
+\`\`\`yaml
+- type: script
+  name: custom_policy_checks
+  config:
+    command: "bash ./validators/check-output.sh"
+\`\`\`
+
+## Notes
+
+- The extension writes one results file per run (timestamped).
+- Results files are JSON and can be diffed or archived.
+`;
 
 interface CustomDiagnosticConfig {
   name: string;
@@ -311,14 +432,14 @@ export function activate(context: vscode.ExtensionContext) {
 
       outputChannel.show(true);
       outputChannel.appendLine(`[Waza] Running evaluation for ${context.skillName}`);
-      
+
       // Create a results directory for this evaluation
       const resultsDir = path.join(extensionContext.globalStorageUri.fsPath, 'results');
       await fs.promises.mkdir(resultsDir, { recursive: true });
-      
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const resultsFile = path.join(resultsDir, `${context.skillName}-${timestamp}.json`);
-      
+
       outputChannel.appendLine(`[Waza] Command: ${getWazaCommand()} run ${evalPath} --context-dir ${context.skillDirPath} --output ${resultsFile}`);
 
       const result = await runWazaCommand(
@@ -341,18 +462,18 @@ export function activate(context: vscode.ExtensionContext) {
       // Check if results file was created
       const resultsFileExists = fs.existsSync(resultsFile);
       const resultsUri = vscode.Uri.file(resultsFile);
-      
+
       if (resultsFileExists) {
         // Format as clickable file URI with proper encoding
         const fileUri = resultsUri.toString();
         outputChannel.appendLine(`[Waza] Results saved to: ${fileUri}`);
-        
+
         // Show notification with action to open results
         const action = await vscode.window.showInformationMessage(
           `waza evaluation completed for ${context.skillName}.`,
           'View Results'
         );
-        
+
         if (action === 'View Results') {
           const document = await vscode.workspace.openTextDocument(resultsUri);
           await vscode.window.showTextDocument(document, { preview: false });
@@ -377,6 +498,23 @@ export function activate(context: vscode.ExtensionContext) {
         outputChannel.appendLine(`[Waza] Download failed: ${message}`);
         void vscode.window.showErrorMessage(`Failed to download waza binary: ${message}`);
       }
+    }),
+    vscode.commands.registerCommand('chatCustomizationsEvaluations.openWazaUserGuide', async () => {
+      const guidePath = extensionContext.asAbsolutePath(path.join('docs', 'WAZA-USER-GUIDE.md'));
+      let document: vscode.TextDocument;
+
+      if (fs.existsSync(guidePath)) {
+        const guideUri = vscode.Uri.file(guidePath);
+        document = await vscode.workspace.openTextDocument(guideUri);
+      } else {
+        outputChannel.appendLine('[Waza] Guide file not found in extension package; opening built-in fallback guide.');
+        document = await vscode.workspace.openTextDocument({
+          content: WAZA_USER_GUIDE_FALLBACK,
+          language: 'markdown',
+        });
+      }
+
+      await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
     })
   );
   // Track diagnostics to toggle button between "Analyze Prompt" and "Fix Diagnostics"
