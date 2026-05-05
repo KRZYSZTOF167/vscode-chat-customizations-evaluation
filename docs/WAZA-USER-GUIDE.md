@@ -60,108 +60,182 @@ waza run <eval.yaml> --context-dir <skill-dir> --output <results-file.json>
    - A clickable file URI in output.
    - A notification with a "View Results" action.
 
-## Validator Types (8) With Examples
+## Grader Types (From Waza Docs)
 
-Below are the 8 validator types supported by waza and a minimal example for each.
+Based on `waza/docs/graders`, the documented grader types are:
 
-### 1. `code`
+- `action_sequence`
+- `behavior`
+- `code`
+- `diff`
+- `file`
+- `human` (not implemented)
+- `human_calibration` (not implemented)
+- `json_schema`
+- `llm` (not implemented)
+- `llm_comparison` (not implemented)
+- `program`
+- `prompt`
+- `script` (not implemented)
+- `skill_invocation`
+- `text`
+- `tool_calls` (not implemented)
+- `tool_constraint`
+- `trigger`
 
-Runs assertion logic against task output.
+For current runs, use implemented grader types. If you use one marked "not implemented", waza will fail to create or run that grader.
+
+Examples:
+
+### `action_sequence`
+
+```yaml
+- type: action_sequence
+   name: deployment-workflow
+   config:
+      matching_mode: in_order_match
+      expected_actions:
+         - "bash"
+         - "edit"
+         - "bash"
+         - "report_progress"
+```
+
+### `behavior`
+
+```yaml
+- type: behavior
+   name: token-budget
+   config:
+      max_tokens: 20000
+      max_duration_ms: 120000
+      max_tool_calls: 10
+```
+
+### `code`
 
 ```yaml
 - type: code
-   name: has_meaningful_output
-   config:
-      assertions:
-         - "len(output) > 20"
+  name: has-output
+  config:
+    assertions:
+      - "len(output) > 20"
 ```
 
-### 2. `text`
-
-Checks text patterns using simple contains/regex match rules.
+### `diff`
 
 ```yaml
-- type: text
-   name: no_runtime_errors
+- type: diff
+   name: expected-config-edits
    config:
-      regex_not_match:
-         - "(?i)error|exception|traceback"
+      expected_files:
+         - path: "src/config.json"
+            snapshot: "snapshots/config.json"
+         - path: "README.md"
+            contains:
+               - "+## Installation"
+               - "-pip install"
 ```
 
-### 3. `model`
-
-Uses an LLM-as-judge rubric to score response quality.
-
-```yaml
-- type: model
-   name: judge_explanation_quality
-   config:
-      rubric: "Score 1-5 for clarity, correctness, and completeness."
-      pass_threshold: 4
-```
-
-### 4. `regex`
-
-Validates output against one or more regular expressions.
-
-```yaml
-- type: regex
-   name: mentions_base_case
-   config:
-      must_match:
-         - "(?i)base case"
-```
-
-### 5. `file`
-
-Checks file artifacts created during execution.
+### `file`
 
 ```yaml
 - type: file
-   name: report_file_created
+   name: report-file-created
    config:
-      path: "artifacts/report.json"
-      must_exist: true
+      must_exist:
+         - "artifacts/report.json"
 ```
 
-### 6. `keyword`
-
-Requires specific keywords in output.
+### `json_schema`
 
 ```yaml
-- type: keyword
-   name: contains_required_terms
+- type: json_schema
+   name: valid-structured-output
    config:
-      include:
-         - recursion
-         - factorial
+      schema:
+         type: object
+         required: ["summary", "confidence"]
+         properties:
+            summary:
+               type: string
+            confidence:
+               type: number
 ```
 
-### 7. `json`
-
-Validates JSON shape and required fields.
+### `program`
 
 ```yaml
-- type: json
-   name: valid_structured_output
+- type: program
+   name: custom-policy-checks
    config:
-      required_keys:
-         - summary
-         - confidence
+      command: "bash"
+      args: ["./validators/check-output.sh"]
+      timeout: 60
 ```
 
-### 8. `script`
-
-Runs a custom script for advanced validation logic.
+### `prompt`
 
 ```yaml
-- type: script
-   name: custom_policy_checks
+- type: prompt
+   name: quality-judge
    config:
-      command: "bash ./validators/check-output.sh"
+      model: gpt-4o-mini
+      prompt: |
+         Evaluate task completion quality.
+         If requirements are met, call set_waza_grade_pass.
+         Otherwise call set_waza_grade_fail with reasons.
 ```
 
-You can mix global validators in `eval.yaml` with task-specific validators in each task file.
+### `skill_invocation`
+
+```yaml
+- type: skill_invocation
+   name: orchestration-flow
+   config:
+      required_skills:
+         - "azure-prepare"
+         - "azure-deploy"
+      mode: in_order
+      allow_extra: true
+```
+
+### `text`
+
+```yaml
+- type: text
+  name: no-runtime-errors
+  config:
+    regex_not_match:
+      - "(?i)error|exception|traceback"
+```
+
+### `tool_constraint`
+
+```yaml
+- type: tool_constraint
+   name: tool-guardrails
+  config:
+      expect_tools:
+         - tool: "bash"
+            command_pattern: "azd\\s+up"
+      reject_tools:
+         - tool: "bash"
+            command_pattern: "rm\\s+-rf"
+```
+
+### `trigger`
+
+```yaml
+- type: trigger
+   name: deploy-trigger
+  config:
+      skill_path: "skills/my-skill/SKILL.md"
+      mode: positive
+      threshold: 0.6
+```
+
+You can mix global graders in `eval.yaml` with task-specific graders in each task file.
 
 ## References
 
@@ -229,7 +303,7 @@ tasks:
 | `metrics[].threshold` | Yes | Pass expectation for that metric. |
 | `metrics[].description` | No | Additional explanation for metric intent. |
 | `graders` | No | Global validators applied to every task. |
-| `graders[].type` | Yes | Grader kind. Supported: `code`, `text`, `prompt`, `file`, `json_schema`, `program`, `behavior`, `action_sequence`, `skill_invocation`, `trigger`, `diff`, `tool_constraint`, `tool_calls`. |
+| `graders[].type` | Yes | Grader kind. Documented: `action_sequence`, `behavior`, `code`, `diff`, `file`, `human` (not implemented), `human_calibration` (not implemented), `json_schema`, `llm` (not implemented), `llm_comparison` (not implemented), `program`, `prompt`, `script` (not implemented), `skill_invocation`, `text`, `tool_calls` (not implemented), `tool_constraint`, `trigger`. |
 | `graders[].name` | Yes | Unique grader identifier in results JSON. |
 | `graders[].config` | No | Type-specific grader configuration block. |
 | `tasks` | Yes | Glob paths pointing to task YAML files. |
@@ -296,7 +370,7 @@ graders:
 | `expected.outcomes` | No | Expected semantic outcomes (task-specific semantics). |
 | `expected.behavior` | No | Behavior limits such as tool calls/duration. |
 | `graders` | No | Task-specific validators in addition to global graders. |
-| `graders[].type` | Yes | Same supported types as eval-level graders. |
+| `graders[].type` | Yes | Same documented types as eval-level graders (including the not-implemented entries). |
 | `graders[].name` | Yes | Task-level grader identifier in output validations. |
 | `graders[].config` | No | Type-specific grader configuration for this task only. |
 | `hooks` | No | Per-task pre/post execution commands where supported. |

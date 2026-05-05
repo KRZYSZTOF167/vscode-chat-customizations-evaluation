@@ -57,87 +57,179 @@ With this extension, you can:
 
 \`waza run <eval.yaml> --context-dir <skill-dir> --output <results-file.json>\`
 
-## Validator Types (8) With Examples
+## Grader Types (From Waza Docs)
 
-### 1. \`code\`
+Based on \`waza/docs/graders\`, documented grader types are:
+
+- \`action_sequence\`
+- \`behavior\`
+- \`code\`
+- \`diff\`
+- \`file\`
+- \`human\` (not implemented)
+- \`human_calibration\` (not implemented)
+- \`json_schema\`
+- \`llm\` (not implemented)
+- \`llm_comparison\` (not implemented)
+- \`program\`
+- \`prompt\`
+- \`script\` (not implemented)
+- \`skill_invocation\`
+- \`text\`
+- \`tool_calls\` (not implemented)
+- \`tool_constraint\`
+- \`trigger\`
+
+Use implemented grader types for real runs. Not-implemented graders fail at runtime.
+
+Examples:
+
+### \`action_sequence\`
+
+\`\`\`yaml
+- type: action_sequence
+  name: deployment-workflow
+  config:
+    matching_mode: in_order_match
+    expected_actions:
+      - "bash"
+      - "edit"
+      - "bash"
+      - "report_progress"
+\`\`\`
+
+### \`behavior\`
+
+\`\`\`yaml
+- type: behavior
+  name: token-budget
+  config:
+    max_tokens: 20000
+    max_duration_ms: 120000
+    max_tool_calls: 10
+\`\`\`
+
+### \`code\`
 
 \`\`\`yaml
 - type: code
-  name: has_meaningful_output
+  name: has-output
   config:
     assertions:
       - "len(output) > 20"
 \`\`\`
 
-### 2. \`text\`
+### \`diff\`
+
+\`\`\`yaml
+- type: diff
+  name: expected-config-edits
+  config:
+    expected_files:
+      - path: "src/config.json"
+        snapshot: "snapshots/config.json"
+      - path: "README.md"
+        contains:
+          - "+## Installation"
+          - "-pip install"
+\`\`\`
+
+### \`file\`
+
+\`\`\`yaml
+- type: file
+  name: report-file-created
+  config:
+    must_exist:
+      - "artifacts/report.json"
+\`\`\`
+
+### \`json_schema\`
+
+\`\`\`yaml
+- type: json_schema
+  name: valid-structured-output
+  config:
+    schema:
+      type: object
+      required: ["summary", "confidence"]
+      properties:
+        summary:
+          type: string
+        confidence:
+          type: number
+\`\`\`
+
+### \`program\`
+
+\`\`\`yaml
+- type: program
+  name: custom-policy-checks
+  config:
+    command: "bash"
+    args: ["./validators/check-output.sh"]
+    timeout: 60
+\`\`\`
+
+### \`prompt\`
+
+\`\`\`yaml
+- type: prompt
+  name: quality-judge
+  config:
+    model: gpt-4o-mini
+    prompt: |
+      Evaluate task completion quality.
+      If requirements are met, call set_waza_grade_pass.
+      Otherwise call set_waza_grade_fail with reasons.
+\`\`\`
+
+### \`skill_invocation\`
+
+\`\`\`yaml
+- type: skill_invocation
+  name: orchestration-flow
+  config:
+    required_skills:
+      - "azure-prepare"
+      - "azure-deploy"
+    mode: in_order
+    allow_extra: true
+\`\`\`
+
+### \`text\`
 
 \`\`\`yaml
 - type: text
-  name: no_runtime_errors
+  name: no-runtime-errors
   config:
     regex_not_match:
       - "(?i)error|exception|traceback"
 \`\`\`
 
-### 3. \`model\`
+### \`tool_constraint\`
 
 \`\`\`yaml
-- type: model
-  name: judge_explanation_quality
+- type: tool_constraint
+  name: tool-guardrails
   config:
-    rubric: "Score 1-5 for clarity, correctness, and completeness."
-    pass_threshold: 4
+    expect_tools:
+      - tool: "bash"
+        command_pattern: "azd\\s+up"
+    reject_tools:
+      - tool: "bash"
+        command_pattern: "rm\\s+-rf"
 \`\`\`
 
-### 4. \`regex\`
+### \`trigger\`
 
 \`\`\`yaml
-- type: regex
-  name: mentions_base_case
+- type: trigger
+  name: deploy-trigger
   config:
-    must_match:
-      - "(?i)base case"
-\`\`\`
-
-### 5. \`file\`
-
-\`\`\`yaml
-- type: file
-  name: report_file_created
-  config:
-    path: "artifacts/report.json"
-    must_exist: true
-\`\`\`
-
-### 6. \`keyword\`
-
-\`\`\`yaml
-- type: keyword
-  name: contains_required_terms
-  config:
-    include:
-      - recursion
-      - factorial
-\`\`\`
-
-### 7. \`json\`
-
-\`\`\`yaml
-- type: json
-  name: valid_structured_output
-  config:
-    required_keys:
-      - summary
-      - confidence
-\`\`\`
-
-### 8. \`script\`
-
-\`\`\`yaml
-- type: script
-  name: custom_policy_checks
-  config:
-    command: "bash ./validators/check-output.sh"
+    skill_path: "skills/my-skill/SKILL.md"
+    mode: positive
+    threshold: 0.6
 \`\`\`
 
 ## References
@@ -198,7 +290,7 @@ tasks:
 - \`metrics[].threshold\`: Pass expectation for that metric.
 - \`metrics[].description\`: Metric intent.
 - \`graders\`: Global validators applied to every task.
-- \`graders[].type\`: Supported kinds: \`code\`, \`text\`, \`prompt\`, \`file\`, \`json_schema\`, \`program\`, \`behavior\`, \`action_sequence\`, \`skill_invocation\`, \`trigger\`, \`diff\`, \`tool_constraint\`, \`tool_calls\`.
+- \`graders[].type\`: Documented kinds: \`action_sequence\`, \`behavior\`, \`code\`, \`diff\`, \`file\`, \`human\` (not implemented), \`human_calibration\` (not implemented), \`json_schema\`, \`llm\` (not implemented), \`llm_comparison\` (not implemented), \`program\`, \`prompt\`, \`script\` (not implemented), \`skill_invocation\`, \`text\`, \`tool_calls\` (not implemented), \`tool_constraint\`, \`trigger\`.
 - \`graders[].name\`: Unique grader identifier in results.
 - \`graders[].config\`: Type-specific grader configuration block.
 - \`tasks\`: Glob paths to task YAML files.
