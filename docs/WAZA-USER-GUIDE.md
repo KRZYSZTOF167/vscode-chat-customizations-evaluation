@@ -163,6 +163,146 @@ Runs a custom script for advanced validation logic.
 
 You can mix global validators in `eval.yaml` with task-specific validators in each task file.
 
+## References
+
+### eval.yaml pseudo structure
+
+```yaml
+name: my-skill-eval
+description: Behavior-focused evaluation for my skill.
+skill: my-skill
+version: "1.0"
+
+config:
+   trials_per_task: 1
+   timeout_seconds: 300
+   parallel: false
+   executor: copilot-sdk
+   model: claude-sonnet-4.6
+
+metrics:
+   - name: task_completion
+      weight: 0.7
+      threshold: 0.8
+      description: Overall completion quality target.
+   - name: efficiency
+      weight: 0.3
+      threshold: 0.7
+      description: Token/runtime quality target.
+
+graders:
+   - type: behavior
+      name: token-budget
+      config:
+         max_tokens: 20000
+         max_duration_ms: 120000
+
+tasks:
+   - "tasks/*.yaml"
+```
+
+### eval.yaml possible fields
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Eval suite name shown in results. |
+| `description` | No | Human-readable purpose of this eval. |
+| `skill` | Yes | Target skill/customization name. |
+| `version` | No | Spec/version label for your suite. |
+| `config` | Yes | Runtime settings block for execution. |
+| `config.trials_per_task` | Yes | Number of runs per task (higher = more stability data). |
+| `config.timeout_seconds` | Yes | Per-task hard timeout. |
+| `config.parallel` | No | Run tasks concurrently when true. |
+| `config.executor` | Yes | Engine type (for example `copilot-sdk` or `mock`). |
+| `config.model` | Yes | Default model used for execution. |
+| `config.workers` | No | Max parallel workers when parallel mode is enabled. |
+| `config.fail_fast` | No | Stop the run immediately after first hard failure. |
+| `config.max_attempts` | No | Retry attempts for failed executions. |
+| `config.judge_model` | No | Separate model for prompt/model-based judging. |
+| `config.skill_directories` | No | Extra skill search paths used by executor/runtime. |
+| `config.required_skills` | No | Skills that must be available before run starts. |
+| `config.disabled_skills` | No | Skills disabled for this run (`["*"]` disables all). |
+| `config.mcp_servers` | No | MCP server config map passed to runtime. |
+| `metrics` | Yes | List of metric definitions (name, weight, threshold). |
+| `metrics[].name` | Yes | Metric identifier (for example `task_completion`). |
+| `metrics[].weight` | Yes | Relative contribution of this metric in final scoring. |
+| `metrics[].threshold` | Yes | Pass expectation for that metric. |
+| `metrics[].description` | No | Additional explanation for metric intent. |
+| `graders` | No | Global validators applied to every task. |
+| `graders[].type` | Yes | Grader kind. Supported: `code`, `text`, `prompt`, `file`, `json_schema`, `program`, `behavior`, `action_sequence`, `skill_invocation`, `trigger`, `diff`, `tool_constraint`, `tool_calls`. |
+| `graders[].name` | Yes | Unique grader identifier in results JSON. |
+| `graders[].config` | No | Type-specific grader configuration block. |
+| `tasks` | Yes | Glob paths pointing to task YAML files. |
+| `hooks` | No | Optional lifecycle shell commands (before/after run/task). |
+| `inputs` | No | Global templated input variables for tasks. |
+| `tasks_from` | No | External file path to load task definitions from. |
+| `range` | No | Restrict run to task index slice `[start, end]`. |
+| `baseline` | No | Enable baseline comparison mode where supported. |
+
+### task YAML pseudo structure
+
+```yaml
+id: positive-trigger-001
+name: Positive Trigger 1
+description: Ensure the skill triggers and produces expected behavior.
+tags:
+   - trigger
+   - happy-path
+
+inputs:
+   prompt: "Generate a Python function normalize_email(email: str) -> str"
+   files:
+      - path: fixtures/sample.py
+   context:
+      scenario: basic
+
+expected:
+   should_trigger: true
+   output_contains:
+      - "normalize_email"
+   output_not_contains:
+      - "as an ai"
+   outcomes:
+      - type: task_completed
+   behavior:
+      max_tool_calls: 0
+
+graders:
+   - type: text
+      name: has-python-shape
+      config:
+         regex_match:
+            - "(?i)def\\s+normalize_email\\s*\\("
+```
+
+### task YAML possible fields
+
+| Field | Required | Description |
+|---|---|---|
+| `id` | Yes | Unique task identifier used in output JSON. |
+| `name` | Yes | Task display name shown in reports. |
+| `description` | No | What this task is testing. |
+| `tags` | No | Labels for filtering/grouping. |
+| `group` | No | Optional group name used in grouped summaries. |
+| `enabled` | No | When false, task is skipped/ignored. |
+| `inputs` | Yes | Prompt and optional context/files provided to model. |
+| `inputs.prompt` | Yes | Main user prompt for this test. |
+| `inputs.context` | No | Structured key/value context payload for the run. |
+| `inputs.files` | No | Fixture files copied into run workspace. |
+| `expected` | No | High-level expectations (triggering, content, behavior). |
+| `expected.should_trigger` | No | Whether skill should trigger for this prompt. |
+| `expected.output_contains` | No | Strings that must appear in final output. |
+| `expected.output_not_contains` | No | Strings that must not appear in final output. |
+| `expected.outcomes` | No | Expected semantic outcomes (task-specific semantics). |
+| `expected.behavior` | No | Behavior limits such as tool calls/duration. |
+| `graders` | No | Task-specific validators in addition to global graders. |
+| `graders[].type` | Yes | Same supported types as eval-level graders. |
+| `graders[].name` | Yes | Task-level grader identifier in output validations. |
+| `graders[].config` | No | Type-specific grader configuration for this task only. |
+| `hooks` | No | Per-task pre/post execution commands where supported. |
+
+Tip: Put reusable checks in top-level `graders` in `eval.yaml` and task-specific checks in each task file.
+
 ## Results File Location
 
 Results are saved under the extension global storage path in a `results` folder.
