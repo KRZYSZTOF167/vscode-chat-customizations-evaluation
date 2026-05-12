@@ -127,6 +127,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
+        "title": "Run Waza Evaluation",
+        "category": "Chat Customizations Evaluations"
+      },
+      {
         "command": "chatCustomizationsEvaluations.wazaDownloadBinary",
         "title": "Download Waza Binary",
         "category": "Chat Customizations Evaluations",
@@ -150,6 +155,11 @@
           "command": "chatCustomizationsEvaluations.fixDiagnostics",
           "group": "inline",
           "when": "chatCustomizationsEvaluations.hasDiagnostics && (editorLangId == prompt || editorLangId == chatagent || editorLangId == skill || editorLangId == instructions || resourceFilename == AGENTS.md)"
+        },
+        {
+          "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
+          "group": "inline",
+          "when": "resourceFilename == eval.yaml"
         }
       ],
       "chat/customizations/item": [

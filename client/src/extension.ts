@@ -647,50 +647,49 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      outputChannel.show(true);
-      outputChannel.appendLine(`[Waza] Running evaluation for ${context.skillName}`);
-
-      // Create a results directory for this evaluation
-      const resultsDir = path.join(extensionContext.globalStorageUri.fsPath, 'results');
-      await fs.promises.mkdir(resultsDir, { recursive: true });
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const resultsFile = path.join(resultsDir, `${context.skillName}-${timestamp}.json`);
-
-      outputChannel.appendLine(`[Waza] Command: ${getWazaCommand()} run ${evalPath} --context-dir ${context.skillDirPath} --output ${resultsFile}`);
-
-      const result = await runWazaCommand(
-        ['run', evalPath, '--context-dir', context.skillDirPath, '--output', resultsFile],
-        context.workspaceRoot,
-      );
-
-      if (result.stdout) {
-        outputChannel.appendLine(result.stdout);
-      }
-      if (result.stderr) {
-        outputChannel.appendLine(result.stderr);
+      await runWazaEvaluationForContext(context, evalPath);
+    }),
+    vscode.commands.registerCommand('chatCustomizationsEvaluations.wazaRunEvalFromFile', async () => {
+      const editor = vscode.window.activeTextEditor;
+      outputChannel.appendLine(`[Waza] wazaRunEvalFromFile called`);
+      outputChannel.appendLine(`[Waza] Editor: ${editor ? 'exists' : 'null'}`);
+      if (editor) {
+        outputChannel.appendLine(`[Waza] Document fileName: ${editor.document.fileName}`);
+        outputChannel.appendLine(`[Waza] Ends with eval.yaml: ${editor.document.fileName.endsWith('eval.yaml')}`);
       }
 
-      // Check if results file was created
-      const resultsFileExists = fs.existsSync(resultsFile);
-      const resultsUri = vscode.Uri.file(resultsFile);
-
-      if (resultsFileExists) {
-        outputChannel.appendLine(`[Waza] Results file URI: ${resultsUri.toString()}`);
-
-        // Show notification with action to open results
-        const action = await vscode.window.showInformationMessage(
-          `waza evaluation completed for ${context.skillName}.`,
-          'View Results'
-        );
-
-        if (action === 'View Results') {
-          const document = await vscode.workspace.openTextDocument(resultsUri);
-          await vscode.window.showTextDocument(document, { preview: false });
-        }
-      } else {
-        void vscode.window.showInformationMessage(`waza evaluation completed for ${context.skillName}.`);
+      if (!editor || !editor.document.fileName.endsWith('eval.yaml')) {
+        void vscode.window.showWarningMessage('This command requires an eval.yaml file to be active.');
+        return;
       }
+
+      const evalUri = editor.document.uri;
+      const evalDir = path.dirname(evalUri.fsPath);
+      outputChannel.appendLine(`[Waza] Eval URI fsPath: ${evalUri.fsPath}`);
+      outputChannel.appendLine(`[Waza] Eval dir: ${evalDir}`);
+
+      // Find the skill directory by looking for SKILL.md
+      const skillFilePath = findSkillFilePathFromEvalDir(evalDir);
+      if (!skillFilePath) {
+        outputChannel.appendLine(`[Waza] Could not find SKILL.md`);
+        void vscode.window.showWarningMessage('Could not find SKILL.md associated with this eval.yaml file.');
+        return;
+      }
+
+      const skillDirPath = path.dirname(skillFilePath);
+      const skillName = path.basename(skillDirPath);
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(evalUri);
+      const workspaceRoot = workspaceFolder?.uri.fsPath || path.dirname(skillDirPath);
+
+      const context: SkillContext = {
+        uri: evalUri,
+        skillFilePath,
+        skillDirPath,
+        skillName,
+        workspaceRoot,
+      };
+
+      await runWazaEvaluationForContext(context, evalUri.fsPath);
     }),
     vscode.commands.registerCommand('chatCustomizationsEvaluations.wazaDownloadBinary', async () => {
       try {
@@ -810,6 +809,60 @@ async function notifyAndFocusProblems(uri: vscode.Uri, diagnostics: vscode.Diagn
   editor.revealRange(firstDiagnostic.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }
 
+async function runWazaEvaluationForContext(context: SkillContext, evalPath: string): Promise<void> {
+  outputChannel.show(true);
+  outputChannel.appendLine(`[Waza] Running evaluation for ${context.skillName}`);
+
+  // Create a results directory for this evaluation
+  const resultsDir = path.join(extensionContext.globalStorageUri.fsPath, 'results');
+  await fs.promises.mkdir(resultsDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const resultsFile = path.join(resultsDir, `${context.skillName}-${timestamp}.json`);
+
+  outputChannel.appendLine(`[Waza] Command: ${getWazaCommand()} run ${evalPath} --context-dir ${context.skillDirPath} --output ${resultsFile}`);
+
+  const result = await runWazaCommand(
+    ['run', evalPath, '--context-dir', context.skillDirPath, '--output', resultsFile],
+    context.workspaceRoot,
+  );
+
+  if (result.stdout) {
+    outputChannel.appendLine(result.stdout);
+  }
+  if (result.stderr) {
+    outputChannel.appendLine(result.stderr);
+  }
+
+  if (result.exitCode !== 0) {
+    void vscode.window.showErrorMessage('waza evaluation failed. See "Chat Customizations Evaluations" output for details.');
+    return;
+  }
+
+  // Check if results file was created
+  const resultsFileExists = fs.existsSync(resultsFile);
+  const resultsUri = vscode.Uri.file(resultsFile);
+
+  if (resultsFileExists) {
+    // Format as clickable file URI with proper encoding
+    const fileUri = resultsUri.toString();
+    outputChannel.appendLine(`[Waza] Results saved to: ${fileUri}`);
+
+    // Show notification with action to open results
+    const action = await vscode.window.showInformationMessage(
+      `waza evaluation completed for ${context.skillName}.`,
+      'View Results'
+    );
+
+    if (action === 'View Results') {
+      const document = await vscode.workspace.openTextDocument(resultsUri);
+      await vscode.window.showTextDocument(document, { preview: false });
+    }
+  } else {
+    void vscode.window.showInformationMessage(`waza evaluation completed for ${context.skillName}.`);
+  }
+}
+
 function getCustomDiagnostics(): CustomDiagnosticConfig[] | undefined {
   const configuration = vscode.workspace.getConfiguration('chatCustomizationsEvaluations');
   const diagnostics = configuration.get<CustomDiagnosticConfig[]>('customDiagnostics', []);
@@ -876,6 +929,48 @@ function findSkillFilePath(startPath: string): string | undefined {
 
     const parent = path.dirname(current);
     if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+function findSkillFilePathFromEvalDir(evalDir: string): string | undefined {
+  // eval.yaml is typically at: <root>/evals/<skill-name>/eval.yaml
+  // or <root>/.claude/evals/<skill-name>/eval.yaml
+  // SKILL.md is typically at: <root>/skills/<skill-name>/SKILL.md
+  // or <root>/.claude/skills/<skill-name>/SKILL.md
+
+  // Extract the skill name from the eval directory (last component)
+  const skillName = path.basename(evalDir);
+  outputChannel.appendLine(`[Waza] Extracted skill name: ${skillName}`);
+
+  // Start from eval directory and search upwards
+  let current = evalDir;
+  while (true) {
+    // Look for SKILL.md directly (for standalone skills)
+    const directCandidate = path.join(current, 'SKILL.md');
+    outputChannel.appendLine(`[Waza] Searching for SKILL.md at: ${directCandidate}`);
+    if (fs.existsSync(directCandidate)) {
+      outputChannel.appendLine(`[Waza] Found SKILL.md at: ${directCandidate}`);
+      return directCandidate;
+    }
+
+    // Look for skills directory at this level, then the skill subdirectory
+    const evalsIndex = current.indexOf('/evals/');
+    if (evalsIndex !== -1) {
+      const beforeEvals = current.substring(0, evalsIndex);
+      const skillsPath = path.join(beforeEvals, 'skills', skillName, 'SKILL.md');
+      outputChannel.appendLine(`[Waza] Searching in parallel skills dir: ${skillsPath}`);
+      if (fs.existsSync(skillsPath)) {
+        outputChannel.appendLine(`[Waza] Found SKILL.md at: ${skillsPath}`);
+        return skillsPath;
+      }
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      outputChannel.appendLine(`[Waza] Reached filesystem root, no SKILL.md found`);
       return undefined;
     }
     current = parent;
