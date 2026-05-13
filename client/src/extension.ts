@@ -728,6 +728,11 @@ export function activate(context: vscode.ExtensionContext) {
     clientOptions
   );
 
+  // Show a popup dialog when the server notifies content is stale
+  client.onNotification('chatCustomizationsEvaluations/contentStale', (params: { uri: string }) => {
+    void vscode.window.showInformationMessage('Content is stale. Run Analyze to update diagnostics.');
+  });
+
   // Register the LLM proxy handler — the server will send requests here
   client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
     markLLMRequestStart();
