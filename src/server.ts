@@ -21,6 +21,7 @@ import {
 
 const connection = createConnection(ProposedFeatures.all);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+const staleNotificationEligibleUris = new Set<string>();
 
 const llmAnalyzer = new LLMAnalyzer();
 
@@ -68,6 +69,8 @@ async function runFullAnalysis(
 
   const diagnostics = resultsToDiagnostics(llmResults);
   connection.sendDiagnostics({ uri, diagnostics });
+  // Allow one stale-content notification on the next edit after analysis completes.
+  staleNotificationEligibleUris.add(uri);
   connection.console.log(`[Analysis] Sent ${diagnostics.length} diagnostics for ${uri}`);
 }
 
@@ -99,6 +102,18 @@ export function resultsToDiagnostics(results: AnalysisResult[]): Diagnostic[] {
   });
 }
 
+documents.onDidChangeContent((change) => {
+  const uri = change.document.uri;
+  if (!staleNotificationEligibleUris.has(uri)) {
+    return;
+  }
+  staleNotificationEligibleUris.delete(uri);
+  // Send a custom notification to the client to show a popup dialog
+  connection.sendNotification('chatCustomizationsEvaluations/contentStale', {
+    uri,
+  });
+});
+
 connection.onNotification('chatCustomizationsEvaluations/analyze', (params: {
   uri: string;
   customDiagnostics?: CustomDiagnosticConfig[];
@@ -108,11 +123,6 @@ connection.onNotification('chatCustomizationsEvaluations/analyze', (params: {
   if (document) {
     runFullAnalysis(document, params.customDiagnostics);
   }
-});
-
-// Clear diagnostics when the document is modified
-documents.onDidChangeContent((change) => {
-  connection.sendDiagnostics({ uri: change.document.uri, diagnostics: [] });
 });
 
 documents.listen(connection);
