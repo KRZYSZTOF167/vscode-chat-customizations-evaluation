@@ -27,6 +27,12 @@ const urisWithDiagnostics = new Set<string>();
 const pendingAnalysisUris = new Set<string>();
 const analysisStatesByUri = new Map<string, AnalysisState>();
 let analysisStatusBarItem: vscode.StatusBarItem | undefined;
+let statusBarCompletionMessage: string | undefined;
+let statusBarCompletionTimer: ReturnType<typeof setTimeout> | undefined;
+
+const STATUS_BAR_COMPLETION_DURATION_MS = 5000;
+const ACTION_SHOW_PROBLEMS = 'Show Problems';
+const ACTION_FIX_DIAGNOSTICS = 'Fix Diagnostics';
 
 interface AnalysisState {
   startedAt: number;
@@ -52,7 +58,15 @@ function updateAnalysisStatusBar(): void {
 
   const runningCount = analysisStatesByUri.size;
   if (runningCount === 0) {
-    analysisStatusBarItem.hide();
+    if (statusBarCompletionMessage) {
+      analysisStatusBarItem.text = statusBarCompletionMessage;
+      analysisStatusBarItem.command = 'workbench.actions.view.problems';
+      analysisStatusBarItem.tooltip = 'Click to open Problems panel';
+      analysisStatusBarItem.show();
+    } else {
+      analysisStatusBarItem.command = undefined;
+      analysisStatusBarItem.hide();
+    }
     return;
   }
 
@@ -62,8 +76,13 @@ function updateAnalysisStatusBar(): void {
   const scope = runningCount > 1 ? ` (${runningCount} files)` : '';
 
   analysisStatusBarItem.text = `$(sync~spin) Analyze: ${fallbackState.stage}${scope}`;
+  analysisStatusBarItem.command = undefined;
   analysisStatusBarItem.tooltip = 'Chat Customizations Evaluations analysis in progress';
   analysisStatusBarItem.show();
+}
+
+function updateIsAnalyzingContext(): void {
+  void vscode.commands.executeCommand('setContext', 'chatCustomizationsEvaluations.isAnalyzing', pendingAnalysisUris.size > 0);
 }
 
 function updateProgressNotificationMessage(uri: string): void {
@@ -115,6 +134,7 @@ function beginAnalysis(uri: string): void {
     stage: 'Starting analysis...',
     llmRequestsInFlight: 0,
   });
+  updateIsAnalyzingContext();
   startProgressNotification(uri);
   updateAnalysisStatusBar();
 }
@@ -197,15 +217,30 @@ async function completeAnalysis(uri: vscode.Uri, result: { duration: number; res
   }
   pendingAnalysisUris.delete(uriKey);
   analysisStatesByUri.delete(uriKey);
+  updateIsAnalyzingContext();
+
+  const issueCount = result.resultCount;
+  statusBarCompletionMessage = issueCount > 0
+    ? `$(check) ${formatIssueSummary(issueCount)}`
+    : `$(check) No issues`;
+  if (statusBarCompletionTimer) {
+    clearTimeout(statusBarCompletionTimer);
+  }
+  statusBarCompletionTimer = setTimeout(() => {
+    statusBarCompletionMessage = undefined;
+    statusBarCompletionTimer = undefined;
+    updateAnalysisStatusBar();
+  }, STATUS_BAR_COMPLETION_DURATION_MS);
   updateAnalysisStatusBar();
 
+  const filename = path.basename(uri.fsPath);
   const durationText = state ? ` in ${formatDurationMs(result.duration)}` : '';
   if (result.resultCount === 0) {
-    void vscode.window.showInformationMessage(`Analysis complete${durationText}: no issues found.`);
+    void vscode.window.showInformationMessage(`Analysis of ${filename} complete${durationText}: no issues found.`);
     return;
   }
 
-  await notifyAndFocusProblems(uri, result.resultCount, durationText);
+  await notifyAndFocusProblems(uri, result.resultCount, filename, durationText);
 }
 const WAZA_USER_GUIDE_FALLBACK = `# Waza User Guide
 
@@ -754,18 +789,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        const analyzeRequest: AnalyzeRequest = {
-          uri: editor.document.uri.toString(),
-          customDiagnostics: getCustomDiagnostics(),
-        };
+      if (!editor) return;
+      if (pendingAnalysisUris.has(editor.document.uri.toString())) return;
 
-        beginAnalysis(editor.document.uri.toString());
-        markAnalysisStage('Submitting analysis request...');
-        // Send notification to server to trigger full analysis
-        const result = client.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
-        await completeAnalysis(editor.document.uri, await result);
-      }
+      const analyzeRequest: AnalyzeRequest = {
+        uri: editor.document.uri.toString(),
+        customDiagnostics: getCustomDiagnostics(),
+      };
+
+      beginAnalysis(editor.document.uri.toString());
+      markAnalysisStage('Submitting analysis request...');
+      // Send request to server to trigger full analysis
+      const result = client.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      await completeAnalysis(editor.document.uri, await result);
     }),
     vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -988,13 +1024,17 @@ function getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
   );
 }
 
-async function notifyAndFocusProblems(uri: vscode.Uri, resultCount: number, durationSuffix = ''): Promise<void> {
-  void vscode.window.showInformationMessage(`Analysis complete${durationSuffix}: ${formatIssueSummary(resultCount)}.`);
+async function notifyAndFocusProblems(uri: vscode.Uri, resultCount: number, filename: string, durationSuffix = ''): Promise<void> {
+  const message = `Analysis of ${filename} complete${durationSuffix}: ${formatIssueSummary(resultCount)}.`;
 
-  await vscode.commands.executeCommand('workbench.actions.view.problems');
-  await vscode.commands.executeCommand('workbench.action.problems.focus');
-  await vscode.commands.executeCommand('list.focusFirst');
-  await vscode.commands.executeCommand('list.select');
+  void (async () => {
+    const action = await vscode.window.showInformationMessage(message, ACTION_SHOW_PROBLEMS, ACTION_FIX_DIAGNOSTICS);
+    if (action === ACTION_SHOW_PROBLEMS) {
+      await vscode.commands.executeCommand('workbench.actions.view.problems');
+    } else if (action === ACTION_FIX_DIAGNOSTICS) {
+      await vscode.commands.executeCommand('chatCustomizationsEvaluations.fixDiagnostics');
+    }
+  })();
 
   const document = await vscode.workspace.openTextDocument(uri);
   const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
@@ -1842,6 +1882,9 @@ async function handleLLMProxyRequest(request: LLMProxyRequest): Promise<LLMProxy
 }
 
 export function deactivate(): Thenable<void> | undefined {
+  if (statusBarCompletionTimer) {
+    clearTimeout(statusBarCompletionTimer);
+  }
   if (!client) {
     return undefined;
   }
