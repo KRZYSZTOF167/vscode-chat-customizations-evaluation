@@ -1970,6 +1970,23 @@ async function doSelectModel(): Promise<vscode.LanguageModelChat | undefined> {
     return undefined;
   }
 
+  const configuration = vscode.workspace.getConfiguration('chatCustomizationsEvaluations');
+  const userModel = configuration.get<string>('model', '').trim();
+
+  if (userModel) {
+    markAnalysisStageWithRequestCount(`Looking for user-selected model: ${userModel}`);
+    outputChannel.appendLine(`[LLM Proxy] Looking for user-selected model: ${userModel}`);
+    const models = await vscode.lm.selectChatModels({ family: userModel });
+    outputChannel.appendLine(`[LLM Proxy] User model matches found: ${models.length}`);
+    if (models.length > 0) {
+      cachedModel = models[0];
+      markAnalysisStageWithRequestCount(`Using user-selected model: ${cachedModel.name}`);
+      outputChannel.appendLine(`[LLM Proxy] Using user-selected model: ${cachedModel.name} (${cachedModel.vendor}/${cachedModel.family})`);
+      return cachedModel;
+    }
+    markAnalysisStageWithRequestCount(`User model not found, falling back to default selection...`);
+  }
+
   markAnalysisStageWithRequestCount('Discovering Copilot models (gpt-4o)...');
   outputChannel.appendLine('[LLM Proxy] Selecting chat models...');
 
