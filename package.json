@@ -155,6 +155,16 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
+          "when": "false"
+        },
+        {
+          "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
+          "when": "false"
+        }
+      ],
       "editor/content": [
         {
           "command": "chatCustomizationsEvaluations.analyzePrompt",
