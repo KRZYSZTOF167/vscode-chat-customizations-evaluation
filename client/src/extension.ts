@@ -15,16 +15,28 @@ import {
   initializeWaza,
   registerWazaCommands,
 } from './waza';
-
-interface LLMProxyRequest {
-  prompt: string;
-  systemPrompt: string;
-}
-
-interface LLMProxyResponse {
-  text: string;
-  error?: string;
-}
+import {
+  ACTION_ANALYZE_AGAIN,
+  ACTION_FIX_DIAGNOSTICS,
+  ACTION_INSTALL_WAZA_BINARY,
+  ACTION_OPEN_WAZA_USER_GUIDE,
+  ACTION_SHOW_PROBLEMS,
+  NON_FIXABLE_DIAGNOSTIC_CODES,
+  TELEMETRY_AUTH_TOKEN_ENV,
+  TELEMETRY_ENDPOINT_ENV,
+} from './strings';
+import type {
+  AnalysisSnapshot,
+  AnalysisState,
+  AnalyzeRequest,
+  CommandResult,
+  CustomDiagnosticConfig,
+  EvalScaffoldSummary,
+  LLMProxyRequest,
+  LLMProxyResponse,
+  SkillContext,
+  TelemetryData,
+} from './extensionTypes';
 
 const LLMRequestType = new RequestType<LLMProxyRequest, LLMProxyResponse, void>('chatCustomizationsEvaluations/llmRequest');
 const urisWithDiagnostics = new Set<string>();
@@ -35,22 +47,7 @@ let statusBarCompletionMessage: string | undefined;
 let statusBarCompletionTimer: ReturnType<typeof setTimeout> | undefined;
 
 const STATUS_BAR_COMPLETION_DURATION_MS = 5000;
-const ACTION_SHOW_PROBLEMS = 'Show Problems';
-const ACTION_FIX_DIAGNOSTICS = 'Fix Diagnostics';
-const ACTION_ANALYZE_AGAIN = 'Analyze Again';
-const ACTION_INSTALL_WAZA_BINARY = 'Install Waza Binary';
-const ACTION_OPEN_WAZA_USER_GUIDE = 'Open Waza User Guide';
-const TELEMETRY_ENDPOINT_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_ENDPOINT';
-const TELEMETRY_AUTH_TOKEN_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_AUTH_TOKEN';
-const NON_FIXABLE_DIAGNOSTIC_CODES = new Set(['llm-error', 'llm-parse-error']);
-
-interface AnalysisState {
-  startedAt: number;
-  stage: string;
-  llmRequestsInFlight: number;
-  progressReporter?: vscode.Progress<{ message?: string; increment?: number }>;
-  resolveProgress?: () => void;
-}
+const NON_FIXABLE_DIAGNOSTIC_CODE_SET = new Set<string>(NON_FIXABLE_DIAGNOSTIC_CODES);
 
 function formatIssueSummary(count: number): string {
   return count === 1 ? '1 issue found' : `${count} issues found`;
@@ -221,11 +218,6 @@ function markDiagnosticsFound(uri: vscode.Uri, count: number): void {
 
 const analysisSnapshotsByUri = new Map<string, AnalysisSnapshot>();
 
-interface AnalysisSnapshot {
-  fingerprint: string;
-  resultCount: number;
-}
-
 function computeAnalysisFingerprint(document: vscode.TextDocument, customDiagnostics?: CustomDiagnosticConfig[]): string {
   return createHash('sha256')
     .update(document.getText())
@@ -293,34 +285,6 @@ async function completeAnalysis(uri: vscode.Uri, result: { duration: number; res
   await notifyAndFocusProblems(uri, result.resultCount, filename, durationText);
 }
 
-interface CustomDiagnosticConfig {
-  name: string;
-  description: string;
-}
-
-interface AnalyzeRequest {
-  uri: string;
-  customDiagnostics?: CustomDiagnosticConfig[];
-}
-
-interface SkillContext {
-  uri: vscode.Uri;
-  skillFilePath: string;
-  skillDirPath: string;
-  skillName: string;
-  workspaceRoot: string;
-}
-
-interface EvalScaffoldSummary {
-  evalPath: string;
-  createdFiles: string[];
-}
-
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
 
 let client: LanguageClient;
 let outputChannel: vscode.OutputChannel;
@@ -328,7 +292,6 @@ let cachedModel: vscode.LanguageModelChat | undefined;
 let modelSelectionPromise: Promise<vscode.LanguageModelChat | undefined> | undefined;
 let extensionContext: vscode.ExtensionContext;
 let telemetryLogger: vscode.TelemetryLogger | undefined;
-type TelemetryData = Record<string, string | number | boolean | undefined>;
 
 class ExtensionTelemetrySender implements vscode.TelemetrySender {
   constructor(
@@ -845,7 +808,7 @@ function diagnosticCodeToString(code: vscode.Diagnostic['code']): string {
 }
 
 function isNonFixableDiagnostic(diagnostic: vscode.Diagnostic): boolean {
-  return NON_FIXABLE_DIAGNOSTIC_CODES.has(diagnosticCodeToString(diagnostic.code));
+  return NON_FIXABLE_DIAGNOSTIC_CODE_SET.has(diagnosticCodeToString(diagnostic.code));
 }
 
 function buildFixDiagnosticsChatQuery(uri: vscode.Uri, diagnostics: vscode.Diagnostic[]): string {
