@@ -14,6 +14,7 @@ import {
  * Handles: contradiction detection, persona consistency, safety analysis, etc.
  */
 export class LLMAnalyzer {
+
   private proxyFn?: LLMProxyFn;
 
   /** Maximum total characters to include in composed text sent to LLM */
@@ -89,10 +90,9 @@ export class LLMAnalyzer {
 
   async analyze(doc: TextDocument, customDiagnostics?: CustomDiagnosticConfig[]): Promise<AnalysisResult[]> {
     if (!this.isAvailable()) {
-      // Return a hint that LLM analysis is disabled
       return [{
         code: 'llm-disabled',
-        message: 'LLM-powered analysis is disabled. Install GitHub Copilot to enable contradiction detection, persona consistency, and other semantic analyses.',
+        message: 'LLM-powered analysis is disabled.',
         severity: 'hint',
         range: {
           start: { line: 0, character: 0 },
@@ -532,7 +532,7 @@ If no conflicts found, return {"conflicts": []}`;
 
     const text = doc.getText();
     const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-    const promptExtensions = ['.prompt.md', '.agent.md', '.instructions.md'];
+    const promptExtensions = ['.prompt.md', '.agent.md', '.instructions.md', 'SKILL.md'];
     const results: { target: string; content: string }[] = [];
 
     let match;
