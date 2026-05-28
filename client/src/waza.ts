@@ -4,6 +4,10 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import * as https from 'https';
 import * as vscode from 'vscode';
+import {
+  ANALYSIS_AND_FIX_USER_GUIDE_FALLBACK,
+  WAZA_USER_GUIDE_FALLBACK,
+} from './wazaFallbackGuides';
 
 export type TelemetryData = Record<string, string | number | boolean | undefined>;
 
@@ -47,363 +51,6 @@ interface WazaDependencies {
 let deps: WazaDependencies | undefined;
 
 const WAZA_CREATE_TIMEOUT_MS = 30_000;
-const WAZA_USER_GUIDE_FALLBACK = `# Waza User Guide
-
-This guide explains how to use waza from the Chat Customizations Evaluations extension.
-
-## What Is Waza?
-
-Waza is a CLI for evaluating AI customizations (skills, agents, prompts, and instructions) using structured eval suites.
-
-With this extension, you can:
-- Create a starter eval scaffold for a customization.
-- Run the eval and save the results to a JSON file.
-- Open and review the saved results.
-- Download and configure a local waza binary.
-
-## Main Commands
-
-- Chat Customizations Evaluations: Create Waza Eval Scaffold
-- Chat Customizations Evaluations: Run Waza Evaluation
-- Chat Customizations Evaluations: Download Waza Binary
-- Chat Customizations Evaluations: Open Waza User Guide
-
-## Typical Flow
-
-1. Open a customization file (for example, SKILL.md).
-2. Run Create Waza Eval Scaffold.
-3. Review generated eval files and tasks.
-4. Run Waza Evaluation.
-5. Open results from the notification action or output panel link.
-
-## Run Command Used By Extension
-
-\`waza run <eval.yaml> --context-dir <skill-dir> --output <results-file.json>\`
-
-## Grader Types (From Waza Docs)
-
-Based on \`waza/docs/graders\`, documented grader types are:
-
-- \`action_sequence\`
-- \`behavior\`
-- \`code\`
-- \`diff\`
-- \`file\`
-- \`human\` (not implemented)
-- \`human_calibration\` (not implemented)
-- \`json_schema\`
-- \`llm\` (not implemented)
-- \`llm_comparison\` (not implemented)
-- \`program\`
-- \`prompt\`
-- \`script\` (not implemented)
-- \`skill_invocation\`
-- \`text\`
-- \`tool_calls\` (not implemented)
-- \`tool_constraint\`
-- \`trigger\`
-
-Use implemented grader types for real runs. Not-implemented graders fail at runtime.
-
-Examples:
-
-### \`action_sequence\`
-
-\`\`\`yaml
-- type: action_sequence
-  name: deployment-workflow
-  config:
-    matching_mode: in_order_match
-    expected_actions:
-      - "bash"
-      - "edit"
-      - "bash"
-      - "report_progress"
-\`\`\`
-
-### \`behavior\`
-
-\`\`\`yaml
-- type: behavior
-  name: token-budget
-  config:
-    max_tokens: 20000
-    max_duration_ms: 120000
-    max_tool_calls: 10
-\`\`\`
-
-### \`code\`
-
-\`\`\`yaml
-- type: code
-  name: has-output
-  config:
-    assertions:
-      - "len(output) > 20"
-\`\`\`
-
-### \`diff\`
-
-\`\`\`yaml
-- type: diff
-  name: expected-config-edits
-  config:
-    expected_files:
-      - path: "src/config.json"
-        snapshot: "snapshots/config.json"
-      - path: "README.md"
-        contains:
-          - "+## Installation"
-          - "-pip install"
-\`\`\`
-
-### \`file\`
-
-\`\`\`yaml
-- type: file
-  name: report-file-created
-  config:
-    must_exist:
-      - "artifacts/report.json"
-\`\`\`
-
-### \`json_schema\`
-
-\`\`\`yaml
-- type: json_schema
-  name: valid-structured-output
-  config:
-    schema:
-      type: object
-      required: ["summary", "confidence"]
-      properties:
-        summary:
-          type: string
-        confidence:
-          type: number
-\`\`\`
-
-### \`program\`
-
-\`\`\`yaml
-- type: program
-  name: custom-policy-checks
-  config:
-    command: "bash"
-    args: ["./validators/check-output.sh"]
-    timeout: 60
-\`\`\`
-
-### \`prompt\`
-
-\`\`\`yaml
-- type: prompt
-  name: quality-judge
-  config:
-    model: gpt-4o-mini
-    prompt: |
-      Evaluate task completion quality.
-      If requirements are met, call set_waza_grade_pass.
-      Otherwise call set_waza_grade_fail with reasons.
-\`\`\`
-
-### \`skill_invocation\`
-
-\`\`\`yaml
-- type: skill_invocation
-  name: orchestration-flow
-  config:
-    required_skills:
-      - "azure-prepare"
-      - "azure-deploy"
-    mode: in_order
-    allow_extra: true
-\`\`\`
-
-### \`text\`
-
-\`\`\`yaml
-- type: text
-  name: no-runtime-errors
-  config:
-    regex_not_match:
-      - "(?i)error|exception|traceback"
-\`\`\`
-
-### \`tool_constraint\`
-
-\`\`\`yaml
-- type: tool_constraint
-  name: tool-guardrails
-  config:
-    expect_tools:
-      - tool: "bash"
-        command_pattern: "azd\\s+up"
-    reject_tools:
-      - tool: "bash"
-        command_pattern: "rm\\s+-rf"
-\`\`\`
-
-### \`trigger\`
-
-\`\`\`yaml
-- type: trigger
-  name: deploy-trigger
-  config:
-    skill_path: "skills/my-skill/SKILL.md"
-    mode: positive
-    threshold: 0.6
-\`\`\`
-
-## References
-
-### eval.yaml pseudo structure
-
-\`\`\`yaml
-name: my-skill-eval
-description: Behavior-focused evaluation for my skill.
-skill: my-skill
-version: "1.0"
-config:
-  trials_per_task: 1
-  timeout_seconds: 300
-  parallel: false
-  executor: copilot-sdk
-  model: claude-sonnet-4.6
-metrics:
-  - name: task_completion
-    weight: 0.7
-    threshold: 0.8
-  - name: efficiency
-    weight: 0.3
-    threshold: 0.7
-graders:
-  - type: behavior
-    name: token-budget
-    config:
-      max_tokens: 20000
-      max_duration_ms: 120000
-tasks:
-  - "tasks/*.yaml"
-\`\`\`
-
-### eval.yaml possible fields
-
-- \`name\`: Eval suite name shown in results.
-- \`description\`: Human-readable purpose of this eval.
-- \`skill\`: Target skill/customization name.
-- \`version\`: Spec/version label for your suite.
-- \`config\`: Runtime settings block for execution.
-- \`config.trials_per_task\`: Number of runs per task.
-- \`config.timeout_seconds\`: Per-task hard timeout.
-- \`config.parallel\`: Run tasks concurrently when true.
-- \`config.executor\`: Engine type (for example \`copilot-sdk\` or \`mock\`).
-- \`config.model\`: Default model used for execution.
-- \`config.workers\`: Max parallel workers.
-- \`config.fail_fast\`: Stop after first hard failure.
-- \`config.max_attempts\`: Retry attempts for failures.
-- \`config.judge_model\`: Separate model for judging.
-- \`config.skill_directories\`: Extra skill search paths.
-- \`config.required_skills\`: Skills required to run.
-- \`config.disabled_skills\`: Skills disabled for this run.
-- \`config.mcp_servers\`: MCP server config map.
-- \`metrics\`: List of metric definitions.
-- \`metrics[].name\`: Metric identifier.
-- \`metrics[].weight\`: Relative score contribution.
-- \`metrics[].threshold\`: Pass expectation for that metric.
-- \`metrics[].description\`: Metric intent.
-- \`graders\`: Global validators applied to every task.
-- \`graders[].type\`: Documented kinds: \`action_sequence\`, \`behavior\`, \`code\`, \`diff\`, \`file\`, \`human\` (not implemented), \`human_calibration\` (not implemented), \`json_schema\`, \`llm\` (not implemented), \`llm_comparison\` (not implemented), \`program\`, \`prompt\`, \`script\` (not implemented), \`skill_invocation\`, \`text\`, \`tool_calls\` (not implemented), \`tool_constraint\`, \`trigger\`.
-- \`graders[].name\`: Unique grader identifier in results.
-- \`graders[].config\`: Type-specific grader configuration block.
-- \`tasks\`: Glob paths to task YAML files.
-- \`hooks\`: Optional lifecycle commands.
-- \`inputs\`: Global templated input variables.
-- \`tasks_from\`: External file path for task definitions.
-- \`range\`: Run only task index slice \`[start, end]\`.
-- \`baseline\`: Enable baseline comparison mode.
-
-### task YAML pseudo structure
-
-\`\`\`yaml
-id: positive-trigger-001
-name: Positive Trigger 1
-description: Ensure the skill triggers and produces expected behavior.
-tags:
-  - trigger
-  - happy-path
-inputs:
-  prompt: "Generate a Python function normalize_email(email: str) -> str"
-  files:
-    - path: fixtures/sample.py
-  context:
-    scenario: basic
-expected:
-  should_trigger: true
-  output_contains:
-    - "normalize_email"
-  output_not_contains:
-    - "as an ai"
-  behavior:
-    max_tool_calls: 0
-graders:
-  - type: text
-    name: has-python-shape
-    config:
-      regex_match:
-        - "(?i)def\\s+normalize_email\\s*\\("
-\`\`\`
-
-### task YAML possible fields
-
-- \`id\`: Unique task identifier used in output JSON.
-- \`name\`: Task display name shown in reports.
-- \`description\`: What the task is testing.
-- \`tags\`: Labels for filtering and grouping.
-- \`group\`: Optional group name in summaries.
-- \`enabled\`: When false, task is skipped.
-- \`inputs\`: Prompt and optional context/files for the run.
-- \`inputs.prompt\`: Main user prompt.
-- \`inputs.context\`: Structured key/value context.
-- \`inputs.files\`: Fixture files copied into workspace.
-- \`expected\`: High-level expectations.
-- \`expected.should_trigger\`: Whether skill should trigger.
-- \`expected.output_contains\`: Strings that must appear.
-- \`expected.output_not_contains\`: Strings that must not appear.
-- \`expected.outcomes\`: Expected semantic outcomes.
-- \`expected.behavior\`: Behavior limits such as tool calls/duration.
-- \`graders\`: Task-specific validators.
-- \`graders[].type\`: Same supported types as eval-level graders.
-- \`graders[].name\`: Task-level grader identifier.
-- \`graders[].config\`: Type-specific task grader config.
-- \`hooks\`: Optional per-task lifecycle commands.
-
-## Notes
-
-- The extension writes one results file per run (timestamped).
-- Results files are JSON and can be diffed or archived.
-`;
-
-const ANALYSIS_AND_FIX_USER_GUIDE_FALLBACK = `# Analysis and Fix User Guide
-
-This guide explains how analysis and diagnostics fixing work in Chat Customizations Evaluations.
-
-## Analyze
-
-- Run Chat Customizations Evaluations: Analyze from the command palette.
-- The extension runs LLM analysis and publishes diagnostics to the Problems panel.
-
-## Fix Diagnostics
-
-- Run Chat Customizations Evaluations: Fix Diagnostics.
-- The extension sends current diagnostics to the fix skill and applies targeted edits.
-
-## Full Guide
-
-The packaged guide file was not found, so this fallback is shown. In source check:
-
-- docs/ANALYSIS-AND-FIX-USER-GUIDE.md
-`;
 
 export function initializeWaza(wazaDeps: WazaDependencies): void {
   deps = wazaDeps;
@@ -417,20 +64,47 @@ function requireDeps(): WazaDependencies {
   return deps;
 }
 
-function resolveGuidePath(extensionContext: vscode.ExtensionContext, fileName: string): string | undefined {
-  const candidates = [
-    path.join('docs', fileName),
-    path.join('..', 'docs', fileName),
-  ];
+class WazaGuideService {
 
-  for (const candidate of candidates) {
-    const absolutePath = extensionContext.asAbsolutePath(candidate);
-    if (fs.existsSync(absolutePath)) {
-      return absolutePath;
-    }
+  constructor(
+    private readonly extensionContext: vscode.ExtensionContext,
+    private readonly outputChannel: vscode.OutputChannel,
+  ) {
   }
 
-  return undefined;
+  async openGuide(fileName: string, fallbackContent: string, missingGuideLogLine: string): Promise<void> {
+    const guidePath = this.resolveGuidePath(fileName);
+    let document: vscode.TextDocument;
+
+    if (guidePath) {
+      const guideUri = vscode.Uri.file(guidePath);
+      document = await vscode.workspace.openTextDocument(guideUri);
+    } else {
+      this.outputChannel.appendLine(missingGuideLogLine);
+      document = await vscode.workspace.openTextDocument({
+        content: fallbackContent,
+        language: 'markdown',
+      });
+    }
+
+    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+  }
+
+  private resolveGuidePath(fileName: string): string | undefined {
+    const candidates = [
+      path.join('docs', fileName),
+      path.join('..', 'docs', fileName),
+    ];
+
+    for (const candidate of candidates) {
+      const absolutePath = this.extensionContext.asAbsolutePath(candidate);
+      if (fs.existsSync(absolutePath)) {
+        return absolutePath;
+      }
+    }
+
+    return undefined;
+  }
 }
 
 export function registerWazaCommands(context: vscode.ExtensionContext): vscode.Disposable[] {
@@ -549,40 +223,22 @@ export function registerWazaCommands(context: vscode.ExtensionContext): vscode.D
     vscode.commands.registerCommand('chatCustomizationsEvaluations.openWazaUserGuide', async () => {
       const { extensionContext, outputChannel, logTelemetryUsage } = requireDeps();
       logTelemetryUsage('command/openWazaUserGuide');
-      const guidePath = resolveGuidePath(extensionContext, 'WAZA-USER-GUIDE.md');
-      let document: vscode.TextDocument;
-
-      if (guidePath) {
-        const guideUri = vscode.Uri.file(guidePath);
-        document = await vscode.workspace.openTextDocument(guideUri);
-      } else {
-        outputChannel.appendLine('[Waza] Guide file not found in extension package; opening built-in fallback guide.');
-        document = await vscode.workspace.openTextDocument({
-          content: WAZA_USER_GUIDE_FALLBACK,
-          language: 'markdown',
-        });
-      }
-
-      await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+      const guideService = new WazaGuideService(extensionContext, outputChannel);
+      await guideService.openGuide(
+        'WAZA-USER-GUIDE.md',
+        WAZA_USER_GUIDE_FALLBACK,
+        '[Waza] Guide file not found in extension package; opening built-in fallback guide.',
+      );
     }),
     vscode.commands.registerCommand('chatCustomizationsEvaluations.openAnalysisAndFixUserGuide', async () => {
       const { extensionContext, outputChannel, logTelemetryUsage } = requireDeps();
       logTelemetryUsage('command/openAnalysisAndFixUserGuide');
-      const guidePath = resolveGuidePath(extensionContext, 'ANALYSIS-AND-FIX-USER-GUIDE.md');
-      let document: vscode.TextDocument;
-
-      if (guidePath) {
-        const guideUri = vscode.Uri.file(guidePath);
-        document = await vscode.workspace.openTextDocument(guideUri);
-      } else {
-        outputChannel.appendLine('[Docs] Analysis and fix guide file not found in extension package; opening built-in fallback guide.');
-        document = await vscode.workspace.openTextDocument({
-          content: ANALYSIS_AND_FIX_USER_GUIDE_FALLBACK,
-          language: 'markdown',
-        });
-      }
-
-      await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+      const guideService = new WazaGuideService(extensionContext, outputChannel);
+      await guideService.openGuide(
+        'ANALYSIS-AND-FIX-USER-GUIDE.md',
+        ANALYSIS_AND_FIX_USER_GUIDE_FALLBACK,
+        '[Docs] Analysis and fix guide file not found in extension package; opening built-in fallback guide.',
+      );
     }),
   ];
 }
@@ -950,87 +606,95 @@ function httpGetBuffer(url: string, headers?: Record<string, string>, redirectCo
   });
 }
 
-async function runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-  const { outputChannel } = requireDeps();
-  const configuredCommand = getWazaCommand();
-  let result = await runCommand(configuredCommand, args, cwd, timeoutMs);
+class WazaCommandExecutor {
+  async runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
+    const { outputChannel } = requireDeps();
+    const configuredCommand = getWazaCommand();
+    let result = await this.runCommand(configuredCommand, args, cwd, timeoutMs);
 
-  if (result.exitCode === 0 || !shouldFallbackToLocalGo(result.stderr)) {
-    return result;
-  }
-
-  const managedBinary = getManagedWazaBinaryPath();
-  if (managedBinary !== configuredCommand && fs.existsSync(managedBinary)) {
-    outputChannel.appendLine(`[Waza] Falling back to downloaded binary at ${managedBinary}`);
-    result = await runCommand(managedBinary, args, cwd, timeoutMs);
     if (result.exitCode === 0 || !shouldFallbackToLocalGo(result.stderr)) {
       return result;
     }
-  }
 
-  const goAvailable = await isCommandAvailable('go');
-  if (!goAvailable) {
-    return {
-      stdout: result.stdout,
-      stderr: `${result.stderr}\nGo is not available on PATH for local fallback. Run "Chat Customizations Evaluations: Download Waza Binary" to install waza for this extension.`.trim(),
-      exitCode: 1,
-    };
-  }
-
-  const localWazaRepo = findLocalWazaRepo(cwd);
-  if (!localWazaRepo) {
-    return result;
-  }
-
-  outputChannel.appendLine(`[Waza] Falling back to local repo via go run in ${localWazaRepo}`);
-  return runCommand('go', ['run', './cmd/waza', ...args], localWazaRepo, timeoutMs);
-}
-
-async function isCommandAvailable(command: string): Promise<boolean> {
-  const { extensionContext } = requireDeps();
-  const probe = await runCommand(command, ['--version'], extensionContext.globalStorageUri.fsPath, 5_000);
-  return !shouldFallbackToLocalGo(probe.stderr);
-}
-
-function runCommand(command: string, args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    let timeout: NodeJS.Timeout | undefined;
-
-    if (timeoutMs) {
-      timeout = setTimeout(() => {
-        child.kill();
-      }, timeoutMs);
+    const managedBinary = getManagedWazaBinaryPath();
+    if (managedBinary !== configuredCommand && fs.existsSync(managedBinary)) {
+      outputChannel.appendLine(`[Waza] Falling back to downloaded binary at ${managedBinary}`);
+      result = await this.runCommand(managedBinary, args, cwd, timeoutMs);
+      if (result.exitCode === 0 || !shouldFallbackToLocalGo(result.stderr)) {
+        return result;
+      }
     }
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    child.on('error', (error) => {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      resolve({
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
+    const goAvailable = await this.isCommandAvailable('go');
+    if (!goAvailable) {
+      return {
+        stdout: result.stdout,
+        stderr: `${result.stderr}\nGo is not available on PATH for local fallback. Run "Chat Customizations Evaluations: Download Waza Binary" to install waza for this extension.`.trim(),
         exitCode: 1,
+      };
+    }
+
+    const localWazaRepo = findLocalWazaRepo(cwd);
+    if (!localWazaRepo) {
+      return result;
+    }
+
+    outputChannel.appendLine(`[Waza] Falling back to local repo via go run in ${localWazaRepo}`);
+    return this.runCommand('go', ['run', './cmd/waza', ...args], localWazaRepo, timeoutMs);
+  }
+
+  private async isCommandAvailable(command: string): Promise<boolean> {
+    const { extensionContext } = requireDeps();
+    const probe = await this.runCommand(command, ['--version'], extensionContext.globalStorageUri.fsPath, 5_000);
+    return !shouldFallbackToLocalGo(probe.stderr);
+  }
+
+  private runCommand(command: string, args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
+    return new Promise((resolve) => {
+      const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      let timeout: NodeJS.Timeout | undefined;
+
+      if (timeoutMs) {
+        timeout = setTimeout(() => {
+          child.kill();
+        }, timeoutMs);
+      }
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8');
+      });
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+
+      child.on('error', (error) => {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        resolve({
+          stdout,
+          stderr: `${stderr}\n${error.message}`.trim(),
+          exitCode: 1,
+        });
+      });
+
+      child.on('close', (code) => {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        resolve({ stdout, stderr, exitCode: code ?? 1 });
       });
     });
+  }
+}
 
-    child.on('close', (code) => {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      resolve({ stdout, stderr, exitCode: code ?? 1 });
-    });
-  });
+const wazaCommandExecutor = new WazaCommandExecutor();
+
+async function runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
+  return wazaCommandExecutor.runWazaCommand(args, cwd, timeoutMs);
 }
 
 async function runWazaEvaluationForContext(context: SkillContext, evalPath: string): Promise<void> {
