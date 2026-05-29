@@ -1,52 +1,24 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import * as https from 'https';
 import * as vscode from 'vscode';
+import { WazaCommandExecutor } from './wazaCommandExecutor';
+import { WazaGuideService } from './wazaGuideService';
+import type {
+  CommandResult,
+  EvalScaffoldSummary,
+  GitHubRelease,
+  SkillContext,
+  WazaAssetTarget,
+  WazaDependencies,
+} from './wazaTypes';
 import {
   ANALYSIS_AND_FIX_USER_GUIDE_FALLBACK,
   WAZA_USER_GUIDE_FALLBACK,
 } from './wazaFallbackGuides';
 
-export type TelemetryData = Record<string, string | number | boolean | undefined>;
-
-export interface SkillContext {
-  uri: vscode.Uri;
-  skillFilePath: string;
-  skillDirPath: string;
-  skillName: string;
-  workspaceRoot: string;
-}
-
-interface EvalScaffoldSummary {
-  evalPath: string;
-  createdFiles: string[];
-}
-
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-interface WazaAssetTarget {
-  os: 'linux' | 'darwin' | 'windows';
-  arch: 'amd64' | 'arm64';
-  fileName: string;
-}
-
-interface GitHubRelease {
-  tag_name?: string;
-}
-
-interface WazaDependencies {
-  extensionContext: vscode.ExtensionContext;
-  outputChannel: vscode.OutputChannel;
-  getCustomizationUri: (obj: unknown) => vscode.Uri | undefined;
-  logTelemetryUsage: (eventName: string, data?: TelemetryData) => void;
-  logTelemetryError: (eventName: string, error: unknown, data?: TelemetryData) => void;
-}
+export type { SkillContext, TelemetryData } from './wazaTypes';
 
 let deps: WazaDependencies | undefined;
 
@@ -64,50 +36,7 @@ function requireDeps(): WazaDependencies {
   return deps;
 }
 
-class WazaGuideService {
-
-  constructor(
-    private readonly extensionContext: vscode.ExtensionContext,
-    private readonly outputChannel: vscode.OutputChannel,
-  ) {
-  }
-
-  async openGuide(fileName: string, fallbackContent: string, missingGuideLogLine: string): Promise<void> {
-    const guidePath = this.resolveGuidePath(fileName);
-    let document: vscode.TextDocument;
-
-    if (guidePath) {
-      const guideUri = vscode.Uri.file(guidePath);
-      document = await vscode.workspace.openTextDocument(guideUri);
-    } else {
-      this.outputChannel.appendLine(missingGuideLogLine);
-      document = await vscode.workspace.openTextDocument({
-        content: fallbackContent,
-        language: 'markdown',
-      });
-    }
-
-    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
-  }
-
-  private resolveGuidePath(fileName: string): string | undefined {
-    const candidates = [
-      path.join('docs', fileName),
-      path.join('..', 'docs', fileName),
-    ];
-
-    for (const candidate of candidates) {
-      const absolutePath = this.extensionContext.asAbsolutePath(candidate);
-      if (fs.existsSync(absolutePath)) {
-        return absolutePath;
-      }
-    }
-
-    return undefined;
-  }
-}
-
-export function registerWazaCommands(context: vscode.ExtensionContext): vscode.Disposable[] {
+export function registerWazaCommands(_context: vscode.ExtensionContext): vscode.Disposable[] {
   return [
     vscode.commands.registerCommand('chatCustomizationsEvaluations.wazaCreateEval', async (obj) => {
       const { logTelemetryUsage } = requireDeps();
@@ -434,30 +363,6 @@ async function runWazaScaffoldViaTempWorkspace(context: SkillContext, scaffoldRo
   }
 }
 
-function findLocalWazaRepo(startDir: string): string | undefined {
-  let current = startDir;
-  while (true) {
-    const repoCandidate = path.join(current, 'waza');
-    const mainPath = path.join(repoCandidate, 'cmd', 'waza', 'main.go');
-    if (fs.existsSync(mainPath)) {
-      return repoCandidate;
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return undefined;
-    }
-    current = parent;
-  }
-}
-
-function shouldFallbackToLocalGo(stderr: string): boolean {
-  const lower = stderr.toLowerCase();
-  return (
-    lower.includes('spawn') && lower.includes('enoent')
-  ) || lower.includes('command not found') || lower.includes('executable file not found');
-}
-
 function detectWazaAssetTarget(): WazaAssetTarget {
   let os: WazaAssetTarget['os'];
   switch (process.platform) {
@@ -606,92 +511,12 @@ function httpGetBuffer(url: string, headers?: Record<string, string>, redirectCo
   });
 }
 
-class WazaCommandExecutor {
-  async runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-    const { outputChannel } = requireDeps();
-    const configuredCommand = getWazaCommand();
-    let result = await this.runCommand(configuredCommand, args, cwd, timeoutMs);
-
-    if (result.exitCode === 0 || !shouldFallbackToLocalGo(result.stderr)) {
-      return result;
-    }
-
-    const managedBinary = getManagedWazaBinaryPath();
-    if (managedBinary !== configuredCommand && fs.existsSync(managedBinary)) {
-      outputChannel.appendLine(`[Waza] Falling back to downloaded binary at ${managedBinary}`);
-      result = await this.runCommand(managedBinary, args, cwd, timeoutMs);
-      if (result.exitCode === 0 || !shouldFallbackToLocalGo(result.stderr)) {
-        return result;
-      }
-    }
-
-    const goAvailable = await this.isCommandAvailable('go');
-    if (!goAvailable) {
-      return {
-        stdout: result.stdout,
-        stderr: `${result.stderr}\nGo is not available on PATH for local fallback. Run "Chat Customizations Evaluations: Download Waza Binary" to install waza for this extension.`.trim(),
-        exitCode: 1,
-      };
-    }
-
-    const localWazaRepo = findLocalWazaRepo(cwd);
-    if (!localWazaRepo) {
-      return result;
-    }
-
-    outputChannel.appendLine(`[Waza] Falling back to local repo via go run in ${localWazaRepo}`);
-    return this.runCommand('go', ['run', './cmd/waza', ...args], localWazaRepo, timeoutMs);
-  }
-
-  private async isCommandAvailable(command: string): Promise<boolean> {
-    const { extensionContext } = requireDeps();
-    const probe = await this.runCommand(command, ['--version'], extensionContext.globalStorageUri.fsPath, 5_000);
-    return !shouldFallbackToLocalGo(probe.stderr);
-  }
-
-  private runCommand(command: string, args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-    return new Promise((resolve) => {
-      const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      let timeout: NodeJS.Timeout | undefined;
-
-      if (timeoutMs) {
-        timeout = setTimeout(() => {
-          child.kill();
-        }, timeoutMs);
-      }
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8');
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-
-      child.on('error', (error) => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        resolve({
-          stdout,
-          stderr: `${stderr}\n${error.message}`.trim(),
-          exitCode: 1,
-        });
-      });
-
-      child.on('close', (code) => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        resolve({ stdout, stderr, exitCode: code ?? 1 });
-      });
-    });
-  }
-}
-
-const wazaCommandExecutor = new WazaCommandExecutor();
+const wazaCommandExecutor = new WazaCommandExecutor({
+  getOutputChannel: () => requireDeps().outputChannel,
+  getWazaCommand,
+  getManagedWazaBinaryPath,
+  getExtensionStoragePath: () => requireDeps().extensionContext.globalStorageUri.fsPath,
+});
 
 async function runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
   return wazaCommandExecutor.runWazaCommand(args, cwd, timeoutMs);
