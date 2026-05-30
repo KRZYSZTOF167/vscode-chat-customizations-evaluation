@@ -17,6 +17,7 @@ export interface AnalysisResult {
 export interface LLMProxyRequest {
   prompt: string;
   systemPrompt: string;
+  uri: string;
 }
 
 export interface LLMProxyResponse {
