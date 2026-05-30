@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import * as vscode from 'vscode';
 import {
   LanguageClient,
@@ -15,15 +14,12 @@ import {
   registerWazaCommands,
 } from './waza';
 import {
-  ACTION_ANALYZE_AGAIN, ACTION_INSTALL_WAZA_BINARY,
-  ACTION_OPEN_WAZA_USER_GUIDE, NON_FIXABLE_DIAGNOSTIC_CODES,
+  ACTION_ANALYZE_AGAIN, NON_FIXABLE_DIAGNOSTIC_CODES,
   TELEMETRY_AUTH_TOKEN_ENV,
   TELEMETRY_ENDPOINT_ENV
 } from './strings';
 import type {
-  AnalyzeRequest,
-  CommandResult,
-  CustomDiagnosticConfig, LLMProxyRequest,
+  AnalyzeRequest, CustomDiagnosticConfig, LLMProxyRequest,
   LLMProxyResponse,
   SkillContext,
   TelemetryData
@@ -308,188 +304,194 @@ class ExtensionRuntime {
 
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => {
-        this.logTelemetryUsage('command/analyzePrompt', { source: 'activeEditor' });
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
-          return;
-        }
-        if (this.analysisCoordinator?.isAnalysisPending(editor.document.uri)) {
-          this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'alreadyRunning' });
-          return;
-        }
-
-        const analyzeRequest: AnalyzeRequest = {
-          uri: editor.document.uri.toString(),
-          customDiagnostics: this.getCustomDiagnostics(),
-        };
-
-        const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(editor.document.uri, analyzeRequest.customDiagnostics);
-        if (currentSnapshot.isFresh) {
-          if (currentSnapshot.diagnostics.length > 0) {
-            await this.analysisCoordinator.focusExistingDiagnostics(editor.document.uri);
-            this.logTelemetryUsage('command/analyzePrompt/result', {
-              outcome: 'alreadyCurrentWithDiagnostics',
-              resultCount: currentSnapshot.diagnostics.length,
-              customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-            });
-            vscode.window.showInformationMessage('Analysis is already up to date.');
-            return;
-          }
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-          this.logTelemetryUsage('command/analyzePrompt/result', {
-            outcome: 'alreadyCurrentNoIssues',
-            resultCount: currentSnapshot.resultCount ?? 0,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          void vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
-          return;
-        }
-
-        this.analysisCoordinator.beginAnalysis(editor.document.uri.toString());
-        this.analysisCoordinator.markAnalysisStage(editor.document.uri.toString(), 'Submitting analysis request...');
-        try {
-          const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
-          this.analysisCoordinator.recordAnalysisSnapshot(editor.document, analyzeRequest.customDiagnostics, result.resultCount);
-          this.logTelemetryUsage('command/analyzePrompt/result', {
-            outcome: 'success',
-            resultCount: result.resultCount,
-            durationMs: result.duration,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          await this.analysisCoordinator.completeAnalysis(editor.document.uri, result);
-        } catch (error) {
-          this.logTelemetryError('command/analyzePrompt/result', error, { outcome: 'failed' });
-          void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
-        }
-      }),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => {
-        this.logTelemetryUsage('command/fixDiagnostics');
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
-          return;
-        }
-
-        const targetUri = editor.document.uri;
-        const initialText = editor.document.getText();
-        const diagnostics = this.getExtensionDiagnostics(targetUri)
-          .slice()
-          .sort((a, b) => {
-            if (a.range.start.line !== b.range.start.line) {
-              return a.range.start.line - b.range.start.line;
-            }
-            return a.range.start.character - b.range.start.character;
-          });
-
-        if (diagnostics.length === 0) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
-          void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
-          return;
-        }
-
-        const fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
-        if (fixableDiagnostics.length === 0) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
-          const action = await vscode.window.showInformationMessage(
-            'Fix Diagnostics is unavailable for LLM analysis error diagnostics. Run Analyze again.',
-            ACTION_ANALYZE_AGAIN,
-          );
-          if (action === ACTION_ANALYZE_AGAIN) {
-            await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
-          }
-          return;
-        }
-
-        await vscode.window.showTextDocument(editor.document, { preview: false, preserveFocus: false });
-
-        const query = this.buildFixDiagnosticsChatQuery(editor.document, fixableDiagnostics);
-        await vscode.commands.executeCommand('workbench.action.chat.open', {
-          query,
-          isPartialQuery: false,
-        });
-
-        const hasImprovements = await this.waitForDocumentImprovements(
-          targetUri,
-          initialText,
-          ExtensionRuntime.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
-        );
-        if (!hasImprovements) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
-          return;
-        }
-
-        const skillContext = this.resolveSkillContext({ uri: targetUri });
-        if (!skillContext) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
-          return;
-        }
-
-        await handlePostFixDiagnosticsFlow(skillContext);
-        this.logTelemetryUsage('command/fixDiagnostics/result', {
-          outcome: 'success',
-          diagnosticsCount: fixableDiagnostics.length,
-        });
-      }),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => {
-        this.logTelemetryUsage('command/analyzePromptFromCustomization');
-        this.outputChannel.appendLine(`customization obj : ${JSON.stringify(obj)}`);
-        const uri = this.getCustomizationUri(obj);
-        if (!uri) {
-          this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
-          void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
-          return;
-        }
-
-        const analyzeRequest: AnalyzeRequest = {
-          uri: uri.toString(),
-          customDiagnostics: this.getCustomDiagnostics(),
-        };
-
-        const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(uri, analyzeRequest.customDiagnostics);
-        if (currentSnapshot.isFresh) {
-          if (currentSnapshot.diagnostics.length > 0) {
-            await this.analysisCoordinator.focusExistingDiagnostics(uri);
-            this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-              outcome: 'alreadyCurrentWithDiagnostics',
-              resultCount: currentSnapshot.diagnostics.length,
-              customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-            });
-            vscode.window.showInformationMessage('Analysis is already up to date.');
-            return;
-          }
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-            outcome: 'alreadyCurrentNoIssues',
-            resultCount: currentSnapshot.resultCount ?? 0,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
-          return;
-        }
-
-        this.analysisCoordinator.beginAnalysis(uri.toString());
-        this.analysisCoordinator.markAnalysisStage(uri.toString(), 'Submitting analysis request...');
-        try {
-          const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
-          this.analysisCoordinator.recordAnalysisSnapshot(currentSnapshot.document, analyzeRequest.customDiagnostics, result.resultCount);
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-
-          await this.analysisCoordinator.completeAnalysis(uri, result);
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-            outcome: 'success',
-            resultCount: result.resultCount,
-            durationMs: result.duration,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-        } catch (error) {
-          this.logTelemetryError('command/analyzePromptFromCustomization/result', error, { outcome: 'failed' });
-          void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
-        }
-      }),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => this.handleAnalyzePromptCommand()),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => this.handleFixDiagnosticsCommand()),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
+  }
+
+  private async handleAnalyzePromptCommand(): Promise<void> {
+    this.logTelemetryUsage('command/analyzePrompt', { source: 'activeEditor' });
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
+      return;
+    }
+    if (this.analysisCoordinator?.isAnalysisPending(editor.document.uri)) {
+      this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'alreadyRunning' });
+      return;
+    }
+
+    const analyzeRequest: AnalyzeRequest = {
+      uri: editor.document.uri.toString(),
+      customDiagnostics: this.getCustomDiagnostics(),
+    };
+
+    const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(editor.document.uri, analyzeRequest.customDiagnostics);
+    if (currentSnapshot.isFresh) {
+      if (currentSnapshot.diagnostics.length > 0) {
+        await this.analysisCoordinator.focusExistingDiagnostics(editor.document.uri);
+        this.logTelemetryUsage('command/analyzePrompt/result', {
+          outcome: 'alreadyCurrentWithDiagnostics',
+          resultCount: currentSnapshot.diagnostics.length,
+          customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+        });
+        vscode.window.showInformationMessage('Analysis is already up to date.');
+        return;
+      }
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+      this.logTelemetryUsage('command/analyzePrompt/result', {
+        outcome: 'alreadyCurrentNoIssues',
+        resultCount: currentSnapshot.resultCount ?? 0,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      void vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
+      return;
+    }
+
+    this.analysisCoordinator.beginAnalysis(editor.document.uri.toString());
+    this.analysisCoordinator.markAnalysisStage(editor.document.uri.toString(), 'Submitting analysis request...');
+    try {
+      const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      this.analysisCoordinator.recordAnalysisSnapshot(editor.document, analyzeRequest.customDiagnostics, result.resultCount);
+      this.logTelemetryUsage('command/analyzePrompt/result', {
+        outcome: 'success',
+        resultCount: result.resultCount,
+        durationMs: result.duration,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      await this.analysisCoordinator.completeAnalysis(editor.document.uri, result);
+    } catch (error) {
+      this.logTelemetryError('command/analyzePrompt/result', error, { outcome: 'failed' });
+      void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
+    }
+  }
+
+  private async handleFixDiagnosticsCommand(): Promise<void> {
+    this.logTelemetryUsage('command/fixDiagnostics');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
+      return;
+    }
+
+    const targetUri = editor.document.uri;
+    const initialText = editor.document.getText();
+    const diagnostics = this.getExtensionDiagnostics(targetUri)
+      .slice()
+      .sort((a, b) => {
+        if (a.range.start.line !== b.range.start.line) {
+          return a.range.start.line - b.range.start.line;
+        }
+        return a.range.start.character - b.range.start.character;
+      });
+
+    if (diagnostics.length === 0) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
+      void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
+      return;
+    }
+
+    const fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
+    if (fixableDiagnostics.length === 0) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
+      const action = await vscode.window.showInformationMessage(
+        'Fix Diagnostics is unavailable for LLM analysis error diagnostics. Run Analyze again.',
+        ACTION_ANALYZE_AGAIN,
+      );
+      if (action === ACTION_ANALYZE_AGAIN) {
+        await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
+      }
+      return;
+    }
+
+    await vscode.window.showTextDocument(editor.document, { preview: false, preserveFocus: false });
+
+    const query = this.buildFixDiagnosticsChatQuery(editor.document, fixableDiagnostics);
+    await vscode.commands.executeCommand('workbench.action.chat.open', {
+      query,
+      isPartialQuery: false,
+    });
+
+    const hasImprovements = await this.waitForDocumentImprovements(
+      targetUri,
+      initialText,
+      ExtensionRuntime.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
+    );
+    if (!hasImprovements) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
+      return;
+    }
+
+    const skillContext = this.resolveSkillContext({ uri: targetUri });
+    if (!skillContext) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
+      return;
+    }
+
+    await handlePostFixDiagnosticsFlow(skillContext);
+    this.logTelemetryUsage('command/fixDiagnostics/result', {
+      outcome: 'success',
+      diagnosticsCount: fixableDiagnostics.length,
+    });
+  }
+
+  private async handleAnalyzePromptFromCustomizationCommand(obj: unknown): Promise<void> {
+    this.logTelemetryUsage('command/analyzePromptFromCustomization');
+    this.outputChannel.appendLine(`customization obj : ${JSON.stringify(obj)}`);
+    const uri = this.getCustomizationUri(obj);
+    if (!uri) {
+      this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
+      void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
+      return;
+    }
+
+    const analyzeRequest: AnalyzeRequest = {
+      uri: uri.toString(),
+      customDiagnostics: this.getCustomDiagnostics(),
+    };
+
+    const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(uri, analyzeRequest.customDiagnostics);
+    if (currentSnapshot.isFresh) {
+      if (currentSnapshot.diagnostics.length > 0) {
+        await this.analysisCoordinator.focusExistingDiagnostics(uri);
+        this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+          outcome: 'alreadyCurrentWithDiagnostics',
+          resultCount: currentSnapshot.diagnostics.length,
+          customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+        });
+        vscode.window.showInformationMessage('Analysis is already up to date.');
+        return;
+      }
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+        outcome: 'alreadyCurrentNoIssues',
+        resultCount: currentSnapshot.resultCount ?? 0,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
+      return;
+    }
+
+    this.analysisCoordinator.beginAnalysis(uri.toString());
+    this.analysisCoordinator.markAnalysisStage(uri.toString(), 'Submitting analysis request...');
+    try {
+      const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      this.analysisCoordinator.recordAnalysisSnapshot(currentSnapshot.document, analyzeRequest.customDiagnostics, result.resultCount);
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+
+      await this.analysisCoordinator.completeAnalysis(uri, result);
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+        outcome: 'success',
+        resultCount: result.resultCount,
+        durationMs: result.duration,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+    } catch (error) {
+      this.logTelemetryError('command/analyzePromptFromCustomization/result', error, { outcome: 'failed' });
+      void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
+    }
   }
 
   private getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
@@ -637,16 +639,6 @@ class ExtensionRuntime {
     return diagnostics.length > 0 ? diagnostics : undefined;
   }
 
-  private getWazaCommand(): string {
-    const configuration = vscode.workspace.getConfiguration('chatCustomizationsEvaluations');
-    return configuration.get<string>('waza.command', 'waza');
-  }
-
-  private getManagedWazaBinaryPath(): string {
-    const fileName = process.platform === 'win32' ? 'waza.exe' : 'waza';
-    return path.join(this.extensionContext.globalStorageUri.fsPath, 'bin', fileName);
-  }
-
   private resolveSkillContext(obj: unknown): SkillContext | undefined {
     const uri = this.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri || uri.scheme !== 'file') {
@@ -703,219 +695,6 @@ class ExtensionRuntime {
     }
   }
 
-  private findEvalPath(context: SkillContext): string | undefined {
-    const candidates = new Set<string>();
-
-    candidates.add(path.join(context.workspaceRoot, 'evals', context.skillName, 'eval.yaml'));
-
-    const skillsDir = path.dirname(context.skillDirPath);
-    if (path.basename(skillsDir) === 'skills') {
-      const projectRoot = path.dirname(skillsDir);
-      candidates.add(path.join(projectRoot, 'evals', context.skillName, 'eval.yaml'));
-    }
-
-    let current = context.skillDirPath;
-    while (true) {
-      candidates.add(path.join(current, 'evals', context.skillName, 'eval.yaml'));
-      candidates.add(path.join(current, 'evals', 'eval.yaml'));
-
-      const parent = path.dirname(current);
-      if (parent === current) {
-        break;
-      }
-      current = parent;
-    }
-
-    candidates.add(path.join(context.skillDirPath, 'evals', 'eval.yaml'));
-    candidates.add(path.join(context.skillDirPath, 'eval.yaml'));
-
-    const ordered = Array.from(candidates);
-    this.outputChannel.appendLine(`[Waza] Looking for eval.yaml for ${context.skillName}`);
-    for (const candidate of ordered) {
-      this.outputChannel.appendLine(`[Waza] Eval candidate: ${candidate}`);
-      if (fs.existsSync(candidate)) {
-        this.outputChannel.appendLine(`[Waza] Using eval file: ${candidate}`);
-        return candidate;
-      }
-    }
-
-    return undefined;
-  }
-
-  private resolveWazaScaffoldCwd(context: SkillContext): string {
-    const skillsDir = path.dirname(context.skillDirPath);
-    if (path.basename(skillsDir) === 'skills') {
-      return path.dirname(skillsDir);
-    }
-
-    return skillsDir;
-  }
-
-  private isWazaSkillLookupError(output: string): boolean {
-    const lower = output.toLowerCase();
-    return lower.includes('finding skill') && lower.includes('not found in workspace');
-  }
-
-  private async runWazaScaffoldViaTempWorkspace(context: SkillContext, scaffoldRoot: string): Promise<CommandResult> {
-    const tempBase = path.join(this.extensionContext.globalStorageUri.fsPath, 'tmp-scaffold');
-    await fs.promises.mkdir(tempBase, { recursive: true });
-
-    const tempRoot = await fs.promises.mkdtemp(path.join(tempBase, 'waza-'));
-    const tempSkillDir = path.join(tempRoot, 'skills', context.skillName);
-    const targetEvalPath = path.join(scaffoldRoot, 'evals', context.skillName, 'eval.yaml');
-
-    try {
-      await fs.promises.mkdir(tempSkillDir, { recursive: true });
-      await fs.promises.copyFile(context.skillFilePath, path.join(tempSkillDir, 'SKILL.md'));
-
-      this.outputChannel.appendLine(`[Waza] Temp scaffold root: ${tempRoot}`);
-      this.outputChannel.appendLine(`[Waza] Target eval output: ${targetEvalPath}`);
-
-      return await this.runWazaCommand(
-        ['new', 'eval', context.skillName, '--output', targetEvalPath],
-        tempRoot,
-        ExtensionRuntime.WAZA_CREATE_TIMEOUT_MS,
-      );
-    } finally {
-      await fs.promises.rm(tempRoot, { recursive: true, force: true });
-    }
-  }
-
-  private findLocalWazaRepo(startDir: string): string | undefined {
-    let current = startDir;
-    while (true) {
-      const repoCandidate = path.join(current, 'waza');
-      const mainPath = path.join(repoCandidate, 'cmd', 'waza', 'main.go');
-      if (fs.existsSync(mainPath)) {
-        return repoCandidate;
-      }
-
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return undefined;
-      }
-      current = parent;
-    }
-  }
-
-  private shouldFallbackToLocalGo(stderr: string): boolean {
-    const lower = stderr.toLowerCase();
-    return (
-      lower.includes('spawn') && lower.includes('enoent')
-    ) || lower.includes('command not found') || lower.includes('executable file not found');
-  }
-
-  private isWazaUnavailableResult(result: CommandResult): boolean {
-    if (result.exitCode === 0) {
-      return false;
-    }
-
-    const output = `${result.stderr}\n${result.stdout}`;
-    const lower = output.toLowerCase();
-    return this.shouldFallbackToLocalGo(output) || lower.includes('go is not available on path for local fallback');
-  }
-
-  private async showWazaInstallPrompt(message: string): Promise<boolean> {
-    const action = await vscode.window.showWarningMessage(
-      message,
-      ACTION_INSTALL_WAZA_BINARY,
-      ACTION_OPEN_WAZA_USER_GUIDE,
-    );
-
-    if (action === ACTION_INSTALL_WAZA_BINARY) {
-      await vscode.commands.executeCommand('chatCustomizationsEvaluations.wazaDownloadBinary');
-      return true;
-    }
-
-    if (action === ACTION_OPEN_WAZA_USER_GUIDE) {
-      await vscode.commands.executeCommand('chatCustomizationsEvaluations.openWazaUserGuide');
-    }
-
-    return false;
-  }
-
-  private async runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-    const configuredCommand = this.getWazaCommand();
-    let result = await this.runCommand(configuredCommand, args, cwd, timeoutMs);
-
-    if (result.exitCode === 0 || !this.shouldFallbackToLocalGo(result.stderr)) {
-      return result;
-    }
-
-    const managedBinary = this.getManagedWazaBinaryPath();
-    if (managedBinary !== configuredCommand && fs.existsSync(managedBinary)) {
-      this.outputChannel.appendLine(`[Waza] Falling back to downloaded binary at ${managedBinary}`);
-      result = await this.runCommand(managedBinary, args, cwd, timeoutMs);
-      if (result.exitCode === 0 || !this.shouldFallbackToLocalGo(result.stderr)) {
-        return result;
-      }
-    }
-
-    const goAvailable = await this.isCommandAvailable('go');
-    if (!goAvailable) {
-      return {
-        stdout: result.stdout,
-        stderr: `${result.stderr}\nGo is not available on PATH for local fallback. Run "Chat Customizations Evaluations: Download Waza Binary" to install waza for this extension.`.trim(),
-        exitCode: 1,
-      };
-    }
-
-    const localWazaRepo = this.findLocalWazaRepo(cwd);
-    if (!localWazaRepo) {
-      return result;
-    }
-
-    this.outputChannel.appendLine(`[Waza] Falling back to local repo via go run in ${localWazaRepo}`);
-    result = await this.runCommand('go', ['run', './cmd/waza', ...args], localWazaRepo, timeoutMs);
-    return result;
-  }
-
-  private async isCommandAvailable(command: string): Promise<boolean> {
-    const probe = await this.runCommand(command, ['--version'], this.extensionContext.globalStorageUri.fsPath, 5_000);
-    return !this.shouldFallbackToLocalGo(probe.stderr);
-  }
-
-  private runCommand(command: string, args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
-    return new Promise((resolve) => {
-      const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      let timeout: NodeJS.Timeout | undefined;
-
-      if (timeoutMs) {
-        timeout = setTimeout(() => {
-          child.kill();
-        }, timeoutMs);
-      }
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8');
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-
-      child.on('error', (error) => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        resolve({
-          stdout,
-          stderr: `${stderr}\n${error.message}`.trim(),
-          exitCode: 1,
-        });
-      });
-
-      child.on('close', (code) => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        resolve({ stdout, stderr, exitCode: code ?? 1 });
-      });
-    });
-  }
-
   private waitForDocumentImprovements(uri: vscode.Uri, initialText: string, timeoutMs: number): Promise<boolean> {
     return new Promise((resolve) => {
       let settled = false;
@@ -924,11 +703,9 @@ class ExtensionRuntime {
         if (event.document.uri.toString() !== uri.toString()) {
           return;
         }
-
         if (event.document.getText() === initialText) {
           return;
         }
-
         settled = true;
         clearTimeout(timer);
         dispose.dispose();
@@ -949,7 +726,6 @@ class ExtensionRuntime {
     if (this.cachedModel) {
       return this.cachedModel;
     }
-
     if (this.modelSelectionPromise) {
       return this.modelSelectionPromise;
     }
