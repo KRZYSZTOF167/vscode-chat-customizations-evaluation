@@ -3,6 +3,7 @@ import type * as vscode from 'vscode';
 export interface LLMProxyRequest {
   prompt: string;
   systemPrompt: string;
+  uri: string;
 }
 
 export interface LLMProxyResponse {

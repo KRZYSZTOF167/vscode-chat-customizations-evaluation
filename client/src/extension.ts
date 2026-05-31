@@ -132,7 +132,7 @@ class ExtensionRuntime {
     });
 
     this.client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
-      this.analysisCoordinator?.markLLMRequestStart();
+      this.analysisCoordinator?.markLLMRequestStart(request.uri);
       this.outputChannel.appendLine('[LLM Proxy] Received request from server');
       try {
         const result = await this.handleLLMProxyRequest(request);
@@ -143,7 +143,7 @@ class ExtensionRuntime {
         }
         return result;
       } finally {
-        this.analysisCoordinator?.markLLMRequestDone();
+        this.analysisCoordinator?.markLLMRequestDone(request.uri);
       }
     });
 
@@ -350,7 +350,7 @@ class ExtensionRuntime {
     }
 
     this.analysisCoordinator.beginAnalysis(editor.document.uri.toString());
-    this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
+    this.analysisCoordinator.markAnalysisStage(editor.document.uri.toString(), 'Submitting analysis request...');
     try {
       const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
       this.analysisCoordinator.recordAnalysisSnapshot(editor.document, analyzeRequest.customDiagnostics, result.resultCount);
@@ -475,7 +475,7 @@ class ExtensionRuntime {
     }
 
     this.analysisCoordinator.beginAnalysis(uri.toString());
-    this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
+    this.analysisCoordinator.markAnalysisStage(uri.toString(), 'Submitting analysis request...');
     try {
       const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
       this.analysisCoordinator.recordAnalysisSnapshot(currentSnapshot.document, analyzeRequest.customDiagnostics, result.resultCount);
@@ -722,14 +722,15 @@ class ExtensionRuntime {
     });
   }
 
-  private async selectModel(): Promise<vscode.LanguageModelChat | undefined> {
+  private async selectModel(analysisUri: string): Promise<vscode.LanguageModelChat | undefined> {
     if (this.cachedModel) {
       return this.cachedModel;
     }
     if (this.modelSelectionPromise) {
       return this.modelSelectionPromise;
     }
-    this.modelSelectionPromise = this.doSelectModel();
+
+    this.modelSelectionPromise = this.doSelectModel(analysisUri);
     try {
       return await this.modelSelectionPromise;
     } finally {
@@ -737,7 +738,7 @@ class ExtensionRuntime {
     }
   }
 
-  private async doSelectModel(): Promise<vscode.LanguageModelChat | undefined> {
+  private async doSelectModel(analysisUri: string): Promise<vscode.LanguageModelChat | undefined> {
     if (!vscode.lm || !vscode.lm.selectChatModels) {
       return undefined;
     }
@@ -746,44 +747,44 @@ class ExtensionRuntime {
     const userModel = configuration.get<string>('model', '').trim();
 
     if (userModel) {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount(`Looking for user-selected model: ${userModel}`);
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Looking for user-selected model: ${userModel}`);
       this.outputChannel.appendLine(`[LLM Proxy] Looking for user-selected model: ${userModel}`);
       const models = await vscode.lm.selectChatModels({ family: userModel });
       this.outputChannel.appendLine(`[LLM Proxy] User model matches found: ${models.length}`);
       if (models.length > 0) {
         this.cachedModel = models[0];
-        this.analysisCoordinator?.markAnalysisStageWithRequestCount(`Using user-selected model: ${this.cachedModel.name}`);
+        this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Using user-selected model: ${this.cachedModel.name}`);
         this.outputChannel.appendLine(`[LLM Proxy] Using user-selected model: ${this.cachedModel.name} (${this.cachedModel.vendor}/${this.cachedModel.family})`);
         return this.cachedModel;
       }
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('User model not found, falling back to default selection...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'User model not found, falling back to default selection...');
     }
 
-    this.analysisCoordinator?.markAnalysisStageWithRequestCount('Discovering Copilot models (claude-sonnet-4.6)...');
+    this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'Discovering Copilot models (claude-sonnet-4.6)...');
     this.outputChannel.appendLine('[LLM Proxy] Selecting chat models...');
 
     let models = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-sonnet-4.6' });
     this.outputChannel.appendLine(`[LLM Proxy] claude-sonnet-4.6 models found: ${models.length}`);
 
     if (models.length === 0) {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('No claude-sonnet-4.6 model found, trying any Copilot model...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'No claude-sonnet-4.6 model found, trying any Copilot model...');
       models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       this.outputChannel.appendLine(`[LLM Proxy] Any Copilot models found: ${models.length}`);
     }
 
     if (models.length === 0) {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('No Copilot-only match, trying all available models...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'No Copilot-only match, trying all available models...');
       models = await vscode.lm.selectChatModels();
       this.outputChannel.appendLine(`[LLM Proxy] Any models found: ${models.length}`);
     }
 
     if (models.length === 0) {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('No model available.');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'No model available.');
       return undefined;
     }
 
     this.cachedModel = models[0];
-    this.analysisCoordinator?.markAnalysisStageWithRequestCount(`Using model: ${this.cachedModel.name}`);
+    this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Using model: ${this.cachedModel.name}`);
     this.outputChannel.appendLine(`[LLM Proxy] Using model: ${this.cachedModel.name} (${this.cachedModel.vendor}/${this.cachedModel.family})`);
     return this.cachedModel;
   }
@@ -792,8 +793,8 @@ class ExtensionRuntime {
     const cts = new vscode.CancellationTokenSource();
     const timeout = setTimeout(() => cts.cancel(), ExtensionRuntime.LLM_REQUEST_TIMEOUT_MS);
     try {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('Preparing Copilot request payload...');
-      const model = await this.selectModel();
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Preparing Copilot request payload...');
+      const model = await this.selectModel(request.uri);
 
       if (!model) {
         return { text: '{}', error: 'No language models available - sign in to GitHub Copilot' };
@@ -803,21 +804,21 @@ class ExtensionRuntime {
         vscode.LanguageModelChatMessage.User(request.systemPrompt + '\n\n' + request.prompt),
       ];
 
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('Sending request to Copilot...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Sending request to Copilot...');
       const response = await model.sendRequest(messages, {}, cts.token);
 
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('Streaming Copilot response...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Streaming Copilot response...');
       let text = '';
       let chunkCount = 0;
       for await (const part of response.text) {
         text += part;
         chunkCount += 1;
         if (chunkCount <= 3 || chunkCount % 10 === 0) {
-          this.analysisCoordinator?.markAnalysisStageWithRequestCount(`Streaming Copilot response (chunk ${chunkCount})...`);
+          this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, `Streaming Copilot response (chunk ${chunkCount})...`);
         }
       }
 
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount('Processing Copilot response...');
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Processing Copilot response...');
 
       return { text };
     } catch (error) {

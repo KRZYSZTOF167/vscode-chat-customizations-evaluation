@@ -12,7 +12,6 @@ import type {
 
 const STATUS_BAR_COMPLETION_DURATION_MS = 5000;
 
-
 export class AnalysisCoordinator {
 
     constructor(
@@ -66,61 +65,57 @@ export class AnalysisCoordinator {
         this.updateAnalysisStatusBar();
     }
 
-    markAnalysisStage(stage: string): void {
-        if (this.analysisStatesByUri.size === 0) {
+    markAnalysisStage(uri: string, stage: string): void {
+        const state = this.analysisStatesByUri.get(uri);
+        if (!state) {
             return;
         }
 
-        for (const [uri, state] of this.analysisStatesByUri.entries()) {
-            state.stage = stage;
-            this.updateProgressNotificationMessage(uri);
-        }
+        state.stage = stage;
+        this.updateProgressNotificationMessage(uri);
         this.updateAnalysisStatusBar();
     }
 
-    markAnalysisStageWithRequestCount(stage: string): void {
-        if (this.analysisStatesByUri.size === 0) {
+    markAnalysisStageWithRequestCount(uri: string, stage: string): void {
+        const state = this.analysisStatesByUri.get(uri);
+        if (!state) {
             return;
         }
 
-        for (const [uri, state] of this.analysisStatesByUri.entries()) {
-            const requestScope = state.llmRequestsInFlight > 1
-                ? ` (${state.llmRequestsInFlight} requests in flight)`
-                : '';
-            state.stage = `${stage}${requestScope}`;
-            this.updateProgressNotificationMessage(uri);
-        }
+        const requestScope = state.llmRequestsInFlight > 1
+            ? ` (${state.llmRequestsInFlight} requests in flight)`
+            : '';
+        state.stage = `${stage}${requestScope}`;
+        this.updateProgressNotificationMessage(uri);
         this.updateAnalysisStatusBar();
     }
 
-    markLLMRequestStart(): void {
-        if (this.analysisStatesByUri.size === 0) {
+    markLLMRequestStart(uri: string): void {
+        const state = this.analysisStatesByUri.get(uri);
+        if (!state) {
             return;
         }
 
-        for (const [uri, state] of this.analysisStatesByUri.entries()) {
-            state.llmRequestsInFlight += 1;
-            const requestCount = state.llmRequestsInFlight;
-            state.stage = requestCount > 1
-                ? `Connecting to Copilot... (${requestCount} requests in flight)`
-                : 'Connecting to Copilot...';
-            this.updateProgressNotificationMessage(uri);
-        }
+        state.llmRequestsInFlight += 1;
+        const requestCount = state.llmRequestsInFlight;
+        state.stage = requestCount > 1
+            ? `Connecting to Copilot... (${requestCount} requests in flight)`
+            : 'Connecting to Copilot...';
+        this.updateProgressNotificationMessage(uri);
         this.updateAnalysisStatusBar();
     }
 
-    markLLMRequestDone(): void {
-        if (this.analysisStatesByUri.size === 0) {
+    markLLMRequestDone(uri: string): void {
+        const state = this.analysisStatesByUri.get(uri);
+        if (!state) {
             return;
         }
 
-        for (const [uri, state] of this.analysisStatesByUri.entries()) {
-            state.llmRequestsInFlight = Math.max(0, state.llmRequestsInFlight - 1);
-            state.stage = state.llmRequestsInFlight > 0
-                ? 'Waiting for Copilot responses...'
-                : 'Finalizing diagnostics...';
-            this.updateProgressNotificationMessage(uri);
-        }
+        state.llmRequestsInFlight = Math.max(0, state.llmRequestsInFlight - 1);
+        state.stage = state.llmRequestsInFlight > 0
+            ? 'Waiting for Copilot responses...'
+            : 'Finalizing diagnostics...';
+        this.updateProgressNotificationMessage(uri);
         this.updateAnalysisStatusBar();
     }
 
@@ -133,12 +128,10 @@ export class AnalysisCoordinator {
             } else {
                 this.urisWithDiagnostics.delete(uriKey);
             }
-
             if (this.pendingAnalysisUris.has(uriKey)) {
                 this.markDiagnosticsFound(uri, diagnostics.length);
             }
         }
-
         this.updateHasDiagnosticsContext();
     }
 
@@ -236,7 +229,6 @@ export class AnalysisCoordinator {
         if (!this.statusBarItem) {
             return;
         }
-
         const runningCount = this.analysisStatesByUri.size;
         if (runningCount === 0) {
             if (this.statusBarCompletionMessage) {
@@ -286,7 +278,6 @@ export class AnalysisCoordinator {
         if (!state) {
             return;
         }
-
         vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
@@ -315,7 +306,6 @@ export class AnalysisCoordinator {
         if (!state) {
             return;
         }
-
         state.stage = `Collecting results: ${this.formatIssueSummary(count)}`;
         this.updateProgressNotificationMessage(uriKey);
         this.updateAnalysisStatusBar();
