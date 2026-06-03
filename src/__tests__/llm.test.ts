@@ -26,7 +26,6 @@ describe('LLMAnalyzer', () => {
       const results = await analyzer.analyze(doc);
       expect(results).toHaveLength(1);
       expect(results[0].code).toBe('llm-disabled');
-      expect(results[0].severity).toBe('hint');
     });
   });
 
@@ -76,6 +75,35 @@ describe('LLMAnalyzer', () => {
     it('should handle nested objects', () => {
       const result = extract('{"a": {"b": [1, 2, 3]}}');
       expect(result).toEqual({ a: { b: [1, 2, 3] } });
+    });
+
+    it('should recover from missing commas between array elements', () => {
+      const malformed = `{
+        "issues": [
+          { "text": "first" }
+          { "text": "second" }
+        ]
+      }`;
+      const result = extract(malformed);
+      expect(result).toEqual({
+        issues: [{ text: 'first' }, { text: 'second' }],
+      });
+    });
+
+    it('should prefer balanced JSON object over trailing prose with braces', () => {
+      const result = extract('{"ok": true}\nNote: use {care} when editing files.');
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('should accept JSONC-style comments and trailing commas', () => {
+      const result = extract(`{
+        // comment
+        "items": [
+          1,
+          2,
+        ],
+      }`);
+      expect(result).toEqual({ items: [1, 2] });
     });
   });
 
@@ -137,7 +165,6 @@ describe('LLMAnalyzer', () => {
           contradictions: [{
             instruction1: 'Be concise',
             instruction2: 'Provide detailed explanations',
-            severity: 'warning',
             explanation: 'These conflict',
           }],
           ambiguity_issues: [],
@@ -173,7 +200,6 @@ describe('LLMAnalyzer', () => {
       const results = await analyzer.analyze(doc);
       // Malformed JSON should surface as a user-visible parse error diagnostic
       expect(results.some(r => r.code === 'llm-parse-error')).toBe(true);
-      expect(results.some(r => r.severity === 'info')).toBe(true);
     });
 
     it('should handle proxy errors gracefully', async () => {
@@ -184,7 +210,6 @@ describe('LLMAnalyzer', () => {
       const results = await analyzer.analyze(doc);
       // Proxy errors surfaced via callLLM throw → allSettled rejection → warning diagnostic
       expect(results.some(r => r.code === 'llm-error')).toBe(true);
-      expect(results.some(r => r.severity === 'warning')).toBe(true);
       expect(results.some(r => r.message.includes('Model unavailable'))).toBe(true);
       // Phase name should be included in the diagnostic message
       expect(results.some(r => r.message.includes('[combined]'))).toBe(true);
@@ -277,8 +302,34 @@ describe('LLMAnalyzer', () => {
       const customDiagnostics = results.filter(r => r.code === 'custom-diagnostic');
 
       expect(customDiagnostics.length).toBeGreaterThan(0);
-      expect(customDiagnostics[0].severity).toBe('warning');
       expect(customDiagnostics[0].range.start.line).toBe(0);
+    });
+
+    it('should include free-form diagnostics returned by the LLM', async () => {
+      const mockProxy = vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          contradictions: [],
+          ambiguity_issues: [],
+          persona_issues: [],
+          cognitive_load: { issues: [], overall_complexity: 'low' },
+          coverage_analysis: {},
+          other_diagnostics: [{
+            title: 'Unsafe Default Assumption',
+            description: 'The prompt assumes missing data should be fabricated.',
+            relevant_text: 'If data is missing, make a best guess and continue.',
+            severity: 'warning',
+            suggestion: 'Require explicit fallback behavior that avoids fabrication.',
+          }],
+        }),
+      });
+      analyzer.setProxyFn(mockProxy);
+
+      const doc = makeDoc('If data is missing, make a best guess and continue.');
+      const results = await analyzer.analyze(doc);
+      const freeDiagnostics = results.filter(r => r.code === 'llm-free-diagnostic');
+
+      expect(freeDiagnostics.length).toBeGreaterThan(0);
+      expect(freeDiagnostics[0].range.start.line).toBe(0);
     });
 
     it('should show error diagnostic when one analysis phase rejects but still return other results', async () => {

@@ -8,7 +8,6 @@ export interface CustomDiagnosticConfig {
 export interface AnalysisResult {
   code: string;
   message: string;
-  severity: 'error' | 'warning' | 'info' | 'hint';
   range: Range;
   analyzer: string;
   suggestion?: string;
@@ -17,6 +16,7 @@ export interface AnalysisResult {
 export interface LLMProxyRequest {
   prompt: string;
   systemPrompt: string;
+  uri: string;
 }
 
 export interface LLMProxyResponse {
@@ -31,7 +31,6 @@ export interface LLMContradictionResponse {
   contradictions?: {
     instruction1: string;
     instruction2: string;
-    severity: 'error' | 'warning';
     explanation: string;
     line1_estimate?: number;
     line2_estimate?: number;
@@ -42,7 +41,6 @@ export interface LLMAmbiguityResponse {
   issues?: {
     text: string;
     type: 'quantifier' | 'reference' | 'term' | 'scope' | 'other';
-    severity: 'warning' | 'info';
     problem: string;
     suggestion: string;
   }[];
@@ -54,7 +52,6 @@ export interface LLMPersonaResponse {
     trait1: string;
     trait2: string;
     relevant_text: string;
-    severity: 'warning' | 'info';
     suggestion: string;
   }[];
 }
@@ -64,7 +61,6 @@ export interface LLMCognitiveLoadResponse {
     type: string;
     description: string;
     relevant_text: string;
-    severity: 'warning' | 'info';
     suggestion: string;
   }[];
   overall_complexity?: 'low' | 'medium' | 'high' | 'very-high';
@@ -92,14 +88,18 @@ export interface LLMCombinedAnalysisResponse {
     summary: string;
     instruction1: string;
     instruction2: string;
-    severity: 'error' | 'warning';
     suggestion: string;
   }[];
   custom_diagnostics?: {
     title: string;
     description: string;
     relevant_text: string;
-    severity: 'error' | 'warning' | 'info';
     suggestion: string;
+  }[];
+  other_diagnostics?: {
+    title: string;
+    description: string;
+    relevant_text: string;
+    suggestion?: string;
   }[];
 }

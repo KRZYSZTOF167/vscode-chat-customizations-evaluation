@@ -1,6 +1,6 @@
 {
   "name": "vscode-chat-customizations-evaluations",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "publisher": "ms-vscode",
   "displayName": "Chat Customizations Evaluations",
   "description": "Extension for analyzing, validating, and improving AI prompts",
@@ -69,8 +69,8 @@
         },
         "chatCustomizationsEvaluations.model": {
           "type": "string",
-          "default": "gpt-4o",
-          "description": "Model to use for analysis (for example: gpt-4o, gpt-4.1, gpt-4.1-mini). Defaults to gpt-4o."
+          "default": "claude-sonnet-4.6",
+          "description": "Model to use for analysis (for example: claude-sonnet-4.6, gpt-4o, gpt-4.1). Defaults to claude-sonnet-4.6."
         },
         "chatCustomizationsEvaluations.customDiagnostics": {
           "type": "array",
@@ -103,7 +103,7 @@
         "chatCustomizationsEvaluations.waza.alwaysRunAfterFixDiagnostics": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically run an existing waza eval after Fix Diagnostics applies improvements"
+          "description": "Automatically run an existing waza eval after Implement suggestions applies improvements"
         }
       }
     },
@@ -115,7 +115,7 @@
       },
       {
         "command": "chatCustomizationsEvaluations.fixDiagnostics",
-        "title": "Fix Diagnostics",
+        "title": "Implement suggestions",
         "category": "Chat Customizations Evaluations"
       },
       {
@@ -126,13 +126,13 @@
       },
       {
         "command": "chatCustomizationsEvaluations.wazaCreateEval",
-        "title": "Create Waza Eval Scaffold",
+        "title": "Create Waza Eval Scaffold For SKILL File",
         "category": "Chat Customizations Evaluations",
         "icon": "$(new-file)"
       },
       {
         "command": "chatCustomizationsEvaluations.wazaRunEval",
-        "title": "Run Waza Evaluation",
+        "title": "Run Waza Evaluation For SKILL File",
         "category": "Chat Customizations Evaluations",
         "icon": "$(play)"
       },
@@ -152,9 +152,25 @@
         "title": "Open Waza User Guide",
         "category": "Chat Customizations Evaluations",
         "icon": "$(book)"
+      },
+      {
+        "command": "chatCustomizationsEvaluations.openAnalysisAndFixUserGuide",
+        "title": "Open Analysis and Fix User Guide",
+        "category": "Chat Customizations Evaluations",
+        "icon": "$(book)"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
+          "when": "false"
+        },
+        {
+          "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
+          "when": "false"
+        }
+      ],
       "editor/content": [
         {
           "command": "chatCustomizationsEvaluations.analyzePrompt",
@@ -169,7 +185,7 @@
         {
           "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
           "group": "inline",
-          "when": "resourceFilename == eval.yaml"
+          "when": "resourceFilename == wazaEval.yaml"
         }
       ],
       "chat/customizations/item": [
@@ -197,7 +213,7 @@
     ],
     "yamlValidation": [
       {
-        "fileMatch": "eval.yaml",
+        "fileMatch": "**/{eval,wazaEval}.yaml",
         "url": "https://raw.githubusercontent.com/microsoft/waza/refs/heads/main/schemas/eval.schema.json"
       }
     ]
@@ -215,6 +231,6 @@
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.55.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.0"
   }
 }
