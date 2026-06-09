@@ -204,6 +204,9 @@ class ExtensionRuntime {
       vscode.languages.onDidChangeDiagnostics((e) => {
         this.analysisCoordinator?.handleDiagnosticsChanged(e.uris);
       }),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        this.handleDocumentChangeForDiagnostics(event);
+      }),
       vscode.workspace.onDidCloseTextDocument((document) => {
         const uriKey = document.uri.toString();
         this.pendingDiagnosticEditsByUri.delete(uriKey);
@@ -574,6 +577,53 @@ class ExtensionRuntime {
     return vscode.languages.getDiagnostics(uri).filter(
       d => d.source?.startsWith('chat-customizations-evaluations')
     );
+  }
+
+  private handleDocumentChangeForDiagnostics(event: vscode.TextDocumentChangeEvent): void {
+    if (event.contentChanges.length === 0) {
+      return;
+    }
+
+    const uri = event.document.uri;
+    const uriKey = uri.toString();
+    const currentEdit = this.pendingDiagnosticEditsByUri.get(uriKey) ?? { fullDocument: false, ranges: [] };
+    const nextEdit = this.mergeDiagnosticEdit(currentEdit, event.contentChanges);
+    this.pendingDiagnosticEditsByUri.set(uriKey, nextEdit);
+
+    const existingDiagnostics = this.extensionDiagnosticCollection.get(uri) ?? [];
+    if (existingDiagnostics.length === 0) {
+      return;
+    }
+
+    const filteredDiagnostics = this.filterDiagnosticsForEdit(existingDiagnostics, nextEdit);
+    if (filteredDiagnostics.length === existingDiagnostics.length) {
+      return;
+    }
+
+    this.extensionDiagnosticCollection.set(uri, filteredDiagnostics);
+    this.outputChannel.appendLine(`[Diagnostics] Removed ${existingDiagnostics.length - filteredDiagnostics.length} touched diagnostics for ${uri.fsPath}`);
+  }
+
+  private mergeDiagnosticEdit(
+    existing: { fullDocument: boolean; ranges: vscode.Range[] },
+    contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+  ): { fullDocument: boolean; ranges: vscode.Range[] } {
+    const hasFullDocumentEdit = existing.fullDocument || contentChanges.some(change => !change.range);
+    if (hasFullDocumentEdit) {
+      return { fullDocument: true, ranges: [] };
+    }
+
+    const nextRanges = existing.ranges.slice();
+    for (const change of contentChanges) {
+      if (change.range) {
+        nextRanges.push(change.range);
+      }
+    }
+
+    return {
+      fullDocument: false,
+      ranges: nextRanges,
+    };
   }
 
   private filterDiagnosticsForEdit(
