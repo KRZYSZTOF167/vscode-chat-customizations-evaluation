@@ -14,7 +14,7 @@ import {
   registerWazaCommands,
 } from './waza/waza';
 import {
-  ACTION_ANALYZE_AGAIN, NON_FIXABLE_DIAGNOSTIC_CODES,
+  ACTION_ANALYZE_AGAIN, ACTION_FIX_DIAGNOSTICS, NON_FIXABLE_DIAGNOSTIC_CODES,
   TELEMETRY_AUTH_TOKEN_ENV,
   TELEMETRY_ENDPOINT_ENV
 } from './strings';
@@ -63,6 +63,7 @@ class ExtensionRuntime {
     this.registerLanguageClientHandlers();
     this.registerCommands(context);
     context.subscriptions.push(...registerWazaCommands(context));
+    this.registerCodeActionProvider(context);
     this.registerWorkspaceHandlers(context);
     this.registerModelHandlers(context);
     this.startLanguageClient();
@@ -196,6 +197,51 @@ class ExtensionRuntime {
       } finally {
         this.analysisCoordinator?.markLLMRequestDone(request.uri);
       }
+    });
+  }
+
+  private registerCodeActionProvider(context: vscode.ExtensionContext): void {
+    const documentSelector: vscode.DocumentSelector = [
+      { scheme: 'file', language: 'prompt' },
+      { scheme: 'file', language: 'chatagent' },
+      { scheme: 'file', language: 'skill' },
+      { scheme: 'file', language: 'instructions' },
+      { scheme: 'file', language: 'markdown', pattern: '**/AGENTS.md' },
+      { scheme: 'vscode-userdata', language: 'prompt' },
+      { scheme: 'vscode-userdata', language: 'chatagent' },
+      { scheme: 'vscode-userdata', language: 'skill' },
+      { scheme: 'vscode-userdata', language: 'instructions' },
+    ];
+
+    this.outputChannel.appendLine('[Code Actions] Registering code action provider');
+    context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider(documentSelector, {
+        provideCodeActions: (document, range, context) => this.provideCodeActions(document, range, context),
+      }, {
+        providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+      }),
+    );
+  }
+
+  private provideCodeActions(document: vscode.TextDocument, range: vscode.Range | vscode.Selection, context: vscode.CodeActionContext): vscode.CodeAction[] {
+    const allDiagnostics = this.getExtensionDiagnostics(document.uri);
+    const fixableDiagnostics = allDiagnostics.filter(
+      d => !this.isNonFixableDiagnostic(d) && this.rangesOverlap(d.range, range),
+    );
+    this.outputChannel.appendLine(`[Code Actions] Found fixable diagnostics: ${fixableDiagnostics.length}`);
+    if (fixableDiagnostics.length === 0) {
+      return [];
+    }
+
+    return fixableDiagnostics.map(diagnostic => {
+      const action = new vscode.CodeAction(ACTION_FIX_DIAGNOSTICS, vscode.CodeActionKind.QuickFix);
+      action.diagnostics = [diagnostic];
+      action.command = {
+        command: 'chatCustomizationsEvaluations.fixDiagnostics',
+        title: ACTION_FIX_DIAGNOSTICS,
+        arguments: [[diagnostic]],
+      };
+      return action;
     });
   }
 
@@ -346,7 +392,7 @@ class ExtensionRuntime {
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.handleAnalyzePromptCommand(obj)),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => this.handleFixDiagnosticsCommand()),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.handleFixDiagnosticsCommand(diagnostics)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
   }
@@ -370,7 +416,7 @@ class ExtensionRuntime {
     });
   }
 
-  private async handleFixDiagnosticsCommand(): Promise<void> {
+  private async handleFixDiagnosticsCommand(scopedDiagnostics?: vscode.Diagnostic[]): Promise<void> {
     this.logTelemetryUsage('command/fixDiagnostics');
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -380,15 +426,21 @@ class ExtensionRuntime {
 
     const targetUri = editor.document.uri;
     const initialText = editor.document.getText();
-    const diagnostics = this.getSortedExtensionDiagnostics(targetUri);
 
-    if (diagnostics.length === 0) {
-      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
-      void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
-      return;
+    let fixableDiagnostics: vscode.Diagnostic[];
+    if (scopedDiagnostics && scopedDiagnostics.length > 0) {
+      fixableDiagnostics = scopedDiagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
+    } else {
+      const diagnostics = this.getSortedExtensionDiagnostics(targetUri);
+
+      if (diagnostics.length === 0) {
+        this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
+        void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
+        return;
+      }
+
+      fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
     }
-
-    const fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
     if (await this.handleNonFixableDiagnosticsOnly(fixableDiagnostics.length)) {
       return;
     }
