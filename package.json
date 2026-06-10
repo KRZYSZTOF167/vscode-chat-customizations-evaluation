@@ -109,7 +109,7 @@
     },
     "commands": [
       {
-        "command": "chatCustomizationsEvaluations.analyzePrompt",
+        "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
         "title": "Analyze",
         "category": "Chat Customizations Evaluations"
       },
@@ -125,8 +125,8 @@
         "icon": "$(beaker)"
       },
       {
-        "command": "chatCustomizationsEvaluations.analyzePromptDirect",
-        "title": "Analyze (Internal)",
+        "command": "chatCustomizationsEvaluations.analyzePrompt",
+        "title": "Analyze",
         "category": "Chat Customizations Evaluations"
       },
       {
@@ -168,11 +168,11 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
+          "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
           "when": "false"
         },
         {
-          "command": "chatCustomizationsEvaluations.analyzePromptDirect",
+          "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
           "when": "false"
         },
         {
@@ -182,7 +182,7 @@
       ],
       "editor/content": [
         {
-          "command": "chatCustomizationsEvaluations.analyzePrompt",
+          "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
           "group": "inline",
           "when": "!chatCustomizationsEvaluations.hasDiagnostics && !chatCustomizationsEvaluations.isAnalyzing && (editorLangId == prompt || editorLangId == chatagent || editorLangId == skill || editorLangId == instructions || resourceFilename == AGENTS.md)"
         },

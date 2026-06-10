@@ -48,7 +48,6 @@ class ExtensionRuntime {
   private extensionDiagnosticCollection!: vscode.DiagnosticCollection;
   private readonly pendingDiagnosticEditsByUri = new Map<string, { fullDocument: boolean; ranges: vscode.Range[] }>();
   private readonly previousDiagnosticMessagesByUri = new Map<string, string[]>();
-  private readonly pendingSlashAnalyzeTimersByUri = new Map<string, ReturnType<typeof setTimeout>>();
 
   activate(context: vscode.ExtensionContext): void {
     this.initializeCoreServices(context);
@@ -75,10 +74,6 @@ class ExtensionRuntime {
   }
 
   deactivate(): Thenable<void> | undefined {
-    for (const timer of this.pendingSlashAnalyzeTimersByUri.values()) {
-      clearTimeout(timer);
-    }
-    this.pendingSlashAnalyzeTimersByUri.clear();
     this.analysisCoordinator?.dispose();
     this.logTelemetryUsage('extension/deactivate');
     this.telemetryLogger?.dispose();
@@ -398,32 +393,31 @@ class ExtensionRuntime {
 
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptUsingSlashCommand', async (obj) => this.handleAnalyzePromptUsingSlashCommand(obj)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.handleAnalyzePromptCommand(obj)),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptDirect', async (obj) => this.handleAnalyzePromptDirectCommand(obj)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.handleFixDiagnosticsCommand(diagnostics)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
   }
 
-  private async handleAnalyzePromptCommand(obj?: unknown): Promise<void> {
-    this.logTelemetryUsage('command/analyzePrompt');
+  private async handleAnalyzePromptUsingSlashCommand(obj?: unknown): Promise<void> {
+    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand');
     const uri = this.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) {
-      this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
+      this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'noActiveEditor' });
       return;
     }
     await this.openAnalyzePromptChat(uri);
-    this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'openedChat' });
+    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'openedChat' });
   }
 
-  private async handleAnalyzePromptDirectCommand(obj?: unknown): Promise<void> {
+  private async handleAnalyzePromptCommand(obj?: unknown): Promise<void> {
     this.logTelemetryUsage('command/analyzePrompt', { source: 'activeEditor' });
     const uri = this.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) {
       this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
       return;
     }
-    this.cancelPendingSlashAnalyzeTimeout(uri);
     if (this.analysisCoordinator?.isAnalysisPending(uri)) {
       this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'alreadyRunning' });
       return;
@@ -510,38 +504,12 @@ class ExtensionRuntime {
     if (targetUri) {
       const document = await vscode.workspace.openTextDocument(targetUri);
       await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
-      this.markPendingSlashAnalyze(document.uri);
     }
     await vscode.commands.executeCommand('workbench.action.chat.newChat');
     await vscode.commands.executeCommand('workbench.action.chat.open', {
       query: '/analyze-prompt',
       isPartialQuery: false,
     });
-  }
-
-  private markPendingSlashAnalyze(uri: vscode.Uri): void {
-    const uriKey = uri.toString();
-    this.analysisCoordinator.queueAnalysis(uriKey);
-
-    const existingTimer = this.pendingSlashAnalyzeTimersByUri.get(uriKey);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    const timer = setTimeout(() => {
-      this.pendingSlashAnalyzeTimersByUri.delete(uriKey);
-      this.analysisCoordinator.clearQueuedAnalysis(uriKey);
-    }, ExtensionRuntime.SLASH_ANALYZE_PENDING_TIMEOUT_MS);
-    this.pendingSlashAnalyzeTimersByUri.set(uriKey, timer);
-  }
-
-  private cancelPendingSlashAnalyzeTimeout(uri: vscode.Uri): void {
-    const uriKey = uri.toString();
-    const existingTimer = this.pendingSlashAnalyzeTimersByUri.get(uriKey);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      this.pendingSlashAnalyzeTimersByUri.delete(uriKey);
-    }
   }
 
   private async runAnalyzeWorkflow(options: {
