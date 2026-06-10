@@ -70,10 +70,10 @@ export class LLMAnalyzer {
   }
 
   private getRangeFromText(doc: TextDocument, text: string): AnalysisResult['range'] {
-    const { line, startChar, endChar } = findTextRange(doc, text);
+    const { line, startChar, endLine, endChar } = findTextRange(doc, text);
     return {
       start: { line, character: startChar },
-      end: { line, character: endChar },
+      end: { line: endLine, character: endChar },
     };
   }
 
@@ -124,7 +124,7 @@ IMPORTANT: The text between CUSTOM_DIAGNOSTICS_CONFIG tags defines custom diagno
     {
       "title": "Name of the custom diagnostic from the config",
       "description": "Specific issue found based on the custom diagnostic requirement",
-      "relevant_text": "exact text from the prompt where the issue appears",
+      "relevant_text": "exact phrase from the prompt where the issue appears",
       "suggestion": "Concrete rewrite or addition that resolves the issue"
     }
   ]`;
@@ -136,7 +136,7 @@ IMPORTANT: The text between CUSTOM_DIAGNOSTICS_CONFIG tags defines custom diagno
     {
       "title": "Short name for a high-confidence issue that does not fit existing categories",
       "description": "Specific issue found and why it is materially harmful",
-      "relevant_text": "exact text from the prompt where the issue appears",
+      "relevant_text": "exact phrase from the prompt where the issue appears",
       "suggestion": "Concrete rewrite or addition that resolves the issue"
     }
   ]`;
@@ -176,6 +176,7 @@ Quality bar for findings:
 - Do NOT report speculative, stylistic, or low-impact nits.
 - If evidence is weak or ambiguous, do not include that finding.
 - It is valid to return no issues in any or all categories when the prompt is already strong.
+- The relevant text should be a whole phrase from the prompt.
 
 Perform ALL of the following analyses:
 
@@ -197,14 +198,14 @@ Respond with a single JSON object in this exact format:
 {
   "contradictions": [
     {
-      "instruction1": "exact text from the prompt",
-      "instruction2": "exact conflicting text from the prompt",
+      "instruction1": "exact phrase from the prompt",
+      "instruction2": "exact conflicting phrase from the prompt",
       "explanation": "Concrete explanation of WHY these conflict and what wrong behavior the model would exhibit"
     }
   ],
   "ambiguity_issues": [
     {
-      "text": "exact ambiguous text from the prompt",
+      "relevant_text": "exact ambiguous phrase from the prompt",
       "type": "quantifier"|"reference"|"term"|"scope"|"other",
       "problem": "What makes this ambiguous — describe the multiple interpretations a model could take",
       "suggestion": "A concrete rewrite that removes the ambiguity, e.g. replace 'a few' with '2-3'"
@@ -215,39 +216,33 @@ Respond with a single JSON object in this exact format:
       "description": "What exactly is inconsistent about the persona",
       "trait1": "first trait or tone",
       "trait2": "conflicting trait or tone",
-      "relevant_text": "exact text from the prompt where this is most evident",
+      "relevant_text": "exact phrase from the prompt where this is most evident",
       "suggestion": "How to make the persona consistent — pick one approach or reconcile them"
     }
   ],
-  "cognitive_load": {
-    "issues": [
-      {
-        "type": "nested-conditions"|"priority-conflict"|"deep-decision-tree"|"constraint-overload",
-        "description": "What makes this hard for a model to follow and what mistakes it would likely make",
-        "relevant_text": "exact text from the prompt causing the issue",
-        "suggestion": "How to restructure this — e.g. break into numbered steps, use a table, split into separate prompts"
-      }
-    ],
-    "overall_complexity": "low"|"medium"|"high"|"very-high"
-  },
-  "coverage_analysis": {
-    "coverage_gaps": [
-      {
-        "gap": "Specific scenario or user intent that is not addressed",
-        "relevant_text": "exact text from the prompt closest to where this gap exists",
-        "impact": "high"|"medium"|"low",
-        "suggestion": "Exact text to add to the prompt to cover this gap"
-      }
-    ],
-    "missing_error_handling": [
-      {
-        "scenario": "Specific error condition or edge case the prompt doesn't handle",
-        "relevant_text": "exact text from the prompt where this handling should be added",
-        "suggestion": "Exact instruction to add, e.g. 'If the user provides invalid input, respond with...'"
-      }
-    ],
-    "overall_coverage": "comprehensive"|"adequate"|"limited"|"minimal"
-  }
+  "cognitive_load": [
+    {
+      "type": "nested-conditions"|"priority-conflict"|"deep-decision-tree"|"constraint-overload",
+      "description": "What makes this hard for a model to follow and what mistakes it would likely make",
+      "relevant_text": "exact phrase from the prompt causing the issue",
+      "suggestion": "How to restructure this — e.g. break into numbered steps, use a table, split into separate prompts"
+    }
+  ],
+  "coverage_gaps": [
+    {
+      "gap": "Specific scenario or user intent that is not addressed",
+      "relevant_text": "exact phrase from the prompt closest to where this gap exists",
+      "impact": "high"|"medium"|"low",
+      "suggestion": "Exact text to add to the prompt to cover this gap"
+    }
+  ],
+  "missing_error_handling": [
+    {
+      "scenario": "Specific error condition or edge case the prompt doesn't handle",
+      "relevant_text": "exact phrase from the prompt where this handling should be added",
+      "suggestion": "Exact instruction to add, e.g. 'If the user provides invalid input, respond with...'"
+    }
+  ],
 ${customDiagnosticsSchema}
 ${otherDiagnosticsSchema}
 }
@@ -423,10 +418,10 @@ ${previousDiagnosticsPrompt}`;
       const problem = issue.problem ? `${issue.problem} ` : '';
       results.push(this.createDiagnostic(doc, {
         code: 'ambiguity-llm',
-        message: `Ambiguous: "${issue.text}". ${problem}Suggestion: ${issue.suggestion}`,
+        message: `Ambiguous: "${issue.relevant_text}". ${problem}Suggestion: ${issue.suggestion}`,
         analyzer: 'ambiguity-detection',
         suggestion: issue.suggestion,
-        relevantText: issue.text,
+        relevantText: issue.relevant_text,
       }));
     }
   }
@@ -444,19 +439,7 @@ ${previousDiagnosticsPrompt}`;
   }
 
   private processCognitiveLoad(doc: TextDocument, parsed: LLMCombinedAnalysisResponse, results: AnalysisResult[]): void {
-    const cogLoad = parsed.cognitive_load;
-    if (!cogLoad) return;
-
-    if (cogLoad.overall_complexity === 'very-high') {
-      results.push(this.createDiagnostic(doc, {
-        code: 'high-complexity',
-        message: `Very high cognitive load detected. This prompt may overwhelm the model's attention. Consider breaking it into simpler, focused prompts.`,
-        analyzer: 'cognitive-load',
-        wholeDocument: true,
-      }));
-    }
-
-    for (const issue of cogLoad.issues || []) {
+    for (const issue of parsed.cognitive_load || []) {
       results.push(this.createDiagnostic(doc, {
         code: `cognitive-${issue.type}`,
         message: `Cognitive load (${issue.type}): ${issue.description}. Suggestion: ${issue.suggestion}`,
@@ -468,19 +451,7 @@ ${previousDiagnosticsPrompt}`;
   }
 
   private processCoverage(doc: TextDocument, parsed: LLMCombinedAnalysisResponse, results: AnalysisResult[]): void {
-    const analysis = parsed.coverage_analysis;
-    if (!analysis) return;
-
-    if (analysis.overall_coverage === 'limited' || analysis.overall_coverage === 'minimal') {
-      results.push(this.createDiagnostic(doc, {
-        code: 'limited-coverage',
-        message: `Semantic coverage is ${analysis.overall_coverage}. This prompt may produce inconsistent results for edge cases.`,
-        analyzer: 'semantic-coverage',
-        wholeDocument: true,
-      }));
-    }
-
-    for (const gap of analysis.coverage_gaps || []) {
+    for (const gap of parsed.coverage_gaps || []) {
       results.push(this.createDiagnostic(doc, {
         code: 'coverage-gap',
         message: `Coverage gap: ${gap.gap}. Suggestion: ${gap.suggestion}`,
@@ -490,7 +461,7 @@ ${previousDiagnosticsPrompt}`;
       }));
     }
 
-    for (const err of analysis.missing_error_handling || []) {
+    for (const err of parsed.missing_error_handling || []) {
       results.push(this.createDiagnostic(doc, {
         code: 'missing-error-handling',
         message: `Missing error handling: ${err.scenario}. Suggestion: ${err.suggestion}`,

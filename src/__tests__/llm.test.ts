@@ -111,6 +111,7 @@ describe('LLMAnalyzer', () => {
       const r = findTextRange(doc, 'second line');
       expect(r.line).toBe(1);
       expect(r.startChar).toBe(0);
+      expect(r.endLine).toBe(1);
       expect(r.endChar).toBe('second line'.length);
     });
 
@@ -119,7 +120,17 @@ describe('LLMAnalyzer', () => {
       const r = findTextRange(doc, 'brown fox');
       expect(r.line).toBe(0);
       expect(r.startChar).toBe('the quick '.length);
+      expect(r.endLine).toBe(0);
       expect(r.endChar).toBe('the quick brown fox'.length);
+    });
+
+    it('should find multi-line match', () => {
+      const doc = makeDoc('the quick brown fox\njumps over\nthe lazy dog');
+      const r = findTextRange(doc, 'brown fox\njumps over');
+      expect(r.line).toBe(0);
+      expect(r.startChar).toBe('the quick '.length);
+      expect(r.endLine).toBe(1);
+      expect(r.endChar).toBe('jumps over'.length);
     });
 
     it('should return line 0 full line when no match found', () => {
@@ -127,29 +138,23 @@ describe('LLMAnalyzer', () => {
       const r = findTextRange(doc, 'nonexistent text that does not appear');
       expect(r.line).toBe(0);
       expect(r.startChar).toBe(0);
+      expect(r.endLine).toBe(0);
       expect(r.endChar).toBe('hello world'.length);
     });
 
-    it('should be case-insensitive', () => {
+    it('should be case-sensitive', () => {
       const doc = makeDoc('Hello World\nGoodbye');
       const r = findTextRange(doc, 'hello world');
       expect(r.line).toBe(0);
       expect(r.startChar).toBe(0);
-      expect(r.endChar).toBe('hello world'.length);
+      expect(r.endLine).toBe(0);
+      expect(r.endChar).toBe('Hello World'.length);
     });
 
     it('should handle empty text', () => {
       const doc = makeDoc('hello');
       const r = findTextRange(doc, '');
       expect(r.line).toBe(0);
-    });
-
-    it('should fall back to word-level partial match with column offsets', () => {
-      const doc = makeDoc('line one\nline two with important word\nline three');
-      const r = findTextRange(doc, 'important word in a different sentence');
-      expect(r.line).toBe(1);
-      expect(r.startChar).toBe('line two with '.length);
-      expect(r.endChar).toBe('line two with '.length + 'important'.length);
     });
   });
 
@@ -164,8 +169,9 @@ describe('LLMAnalyzer', () => {
           }],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -264,8 +270,9 @@ describe('LLMAnalyzer', () => {
             severity: 'warning',
             suggestion: 'Pick one tone',
           }],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -281,14 +288,15 @@ describe('LLMAnalyzer', () => {
         text: JSON.stringify({
           contradictions: [],
           ambiguity_issues: [{
-            text: 'be professional',
+            relevant_text: 'be professional',
             type: 'term',
             severity: 'info',
             suggestion: 'Define what professional means',
           }],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -307,8 +315,9 @@ describe('LLMAnalyzer', () => {
           contradictions: [],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
           custom_diagnostics: [{
             title: 'Output Schema Validation',
             description: 'The prompt does not define the expected JSON schema for output.',
@@ -337,8 +346,9 @@ describe('LLMAnalyzer', () => {
           contradictions: [],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
           other_diagnostics: [{
             title: 'Unsafe Default Assumption',
             description: 'The prompt assumes missing data should be fabricated.',
