@@ -21,10 +21,22 @@ export class WazaCommandExecutor {
         if (result.exitCode === 0) {
             return result;
         }
+
         const managedBinary = this.deps.getManagedWazaBinaryPath();
-        this.deps.getOutputChannel().appendLine('[Waza] Managed binary not found; downloading it now.');
-        if (managedBinary !== configuredCommand && !fs.existsSync(managedBinary)) {
+        if (!fs.existsSync(managedBinary)) {
+            this.deps.getOutputChannel().appendLine('[Waza] Managed binary not found; downloading it now.');
             await this.deps.installManagedWazaBinary();
+            if (!fs.existsSync(managedBinary)) {
+                return {
+                    stdout: result.stdout,
+                    stderr: [
+                        result.stderr,
+                        `Managed waza binary was not found after download attempt: ${managedBinary}`,
+                    ].filter(Boolean).join('\n'),
+                    exitCode: 1,
+                };
+            }
+
             result = await this.runCommand(managedBinary, args, cwd, timeoutMs);
 
         }
