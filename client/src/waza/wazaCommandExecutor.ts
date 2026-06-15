@@ -8,40 +8,25 @@ interface WazaCommandExecutorDependencies {
     getWazaCommand: () => string;
     getManagedWazaBinaryPath: () => string;
     getExtensionStoragePath: () => string;
-    installManagedWazaBinary: () => Promise<string | undefined>;
+    installManagedWazaBinary: () => Promise<void>;
 }
 
 export class WazaCommandExecutor {
 
-    constructor(private readonly deps: WazaCommandExecutorDependencies) {
-    }
+    constructor(private readonly deps: WazaCommandExecutorDependencies) { }
 
     async runWazaCommand(args: string[], cwd: string, timeoutMs?: number): Promise<CommandResult> {
         const configuredCommand = this.deps.getWazaCommand();
         let result = await this.runCommand(configuredCommand, args, cwd, timeoutMs);
-
         if (result.exitCode === 0) {
             return result;
         }
-
         const managedBinary = this.deps.getManagedWazaBinaryPath();
-        if (managedBinary !== configuredCommand) {
-            let managedBinaryToRun = managedBinary;
-            if (!fs.existsSync(managedBinaryToRun)) {
-                this.deps.getOutputChannel().appendLine('[Waza] Managed binary not found; downloading it now.');
-                const installedBinary = await this.deps.installManagedWazaBinary();
-                if (installedBinary) {
-                    managedBinaryToRun = installedBinary;
-                }
-            }
+        this.deps.getOutputChannel().appendLine('[Waza] Managed binary not found; downloading it now.');
+        if (managedBinary !== configuredCommand && !fs.existsSync(managedBinary)) {
+            await this.deps.installManagedWazaBinary();
+            result = await this.runCommand(managedBinary, args, cwd, timeoutMs);
 
-            if (fs.existsSync(managedBinaryToRun)) {
-                this.deps.getOutputChannel().appendLine(`[Waza] Falling back to downloaded binary at ${managedBinaryToRun}`);
-                result = await this.runCommand(managedBinaryToRun, args, cwd, timeoutMs);
-                if (result.exitCode === 0) {
-                    return result;
-                }
-            }
         }
         return result;
     }

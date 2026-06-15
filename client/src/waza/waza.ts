@@ -41,7 +41,7 @@ class WazaOrchestrator {
             getWazaCommand: () => this.getWazaCommand(),
             getManagedWazaBinaryPath: () => this.getManagedWazaBinaryPath(),
             getExtensionStoragePath: () => this.requireDeps().extensionContext.globalStorageUri.fsPath,
-            installManagedWazaBinary: async () => this.installManagedWazaBinary(),
+            installManagedWazaBinary: async () => await this.installManagedWazaBinary(),
         });
     }
 
@@ -297,19 +297,8 @@ class WazaOrchestrator {
         return path.join(extensionContext.globalStorageUri.fsPath, 'bin', fileName);
     }
 
-    private async installManagedWazaBinary(): Promise<string | undefined> {
+    private async installManagedWazaBinary(): Promise<void> {
         await vscode.commands.executeCommand('chatCustomizationsEvaluations.wazaDownloadBinary');
-        const managedBinaryPath = this.getManagedWazaBinaryPath();
-        if (fs.existsSync(managedBinaryPath)) {
-            return managedBinaryPath;
-        }
-
-        const configuredCommand = this.getWazaCommand();
-        if (configuredCommand !== 'waza' && fs.existsSync(configuredCommand)) {
-            return configuredCommand;
-        }
-
-        return undefined;
     }
 
     private inferSkillProjectRoot(uri: vscode.Uri, skillDirPath: string): string {
