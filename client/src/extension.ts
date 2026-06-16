@@ -92,8 +92,7 @@ class ExtensionRuntime {
       (diagnostic) => this.isNonFixableDiagnostic(diagnostic),
     );
     this.analysisCoordinator.initialize(context);
-
-    this.modelPicker = new ModelPicker(this.analysisCoordinator, this.outputChannel);
+    this.modelPicker = new ModelPicker(this.outputChannel);
 
     this.telemetryLogger = this.createExtensionTelemetryLogger(context);
     context.subscriptions.push(this.telemetryLogger);
@@ -896,11 +895,12 @@ class ExtensionRuntime {
     const cts = new vscode.CancellationTokenSource();
     const timeout = setTimeout(() => cts.cancel(), ExtensionRuntime.LLM_REQUEST_TIMEOUT_MS);
     try {
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Preparing Copilot request payload...');
-      const model = await this.modelPicker.selectModel(request.uri);
+      const model = await this.modelPicker.selectModel();
 
       if (!model) {
         return { text: '{}', error: 'No language models available - sign in to GitHub Copilot' };
+      } else {
+        this.outputChannel.appendLine(`[LLM Proxy] Selected model: ${model.name} (${model.vendor}/${model.family})`);
       }
 
       const messages = this.buildLLMProxyMessages(request);
