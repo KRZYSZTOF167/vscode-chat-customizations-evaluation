@@ -186,7 +186,6 @@ class ExtensionRuntime {
     });
 
     this.client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
-      this.analysisCoordinator?.markLLMRequestStart(request.uri);
       this.outputChannel.appendLine('[LLM Proxy] Received request from server');
       try {
         const result = await this.handleLLMProxyRequest(request);
@@ -196,8 +195,9 @@ class ExtensionRuntime {
           this.outputChannel.appendLine(`[LLM Proxy] Success (${result.text.length} chars)`);
         }
         return result;
-      } finally {
-        this.analysisCoordinator?.markLLMRequestDone(request.uri);
+      } catch (error) {
+        this.outputChannel.appendLine(`[LLM Proxy] Unexpected error: ${error}`);
+        throw error;
       }
     });
   }
@@ -218,14 +218,14 @@ class ExtensionRuntime {
     this.outputChannel.appendLine('[Code Actions] Registering code action provider');
     context.subscriptions.push(
       vscode.languages.registerCodeActionsProvider(documentSelector, {
-        provideCodeActions: (document, range, context) => this.provideCodeActions(document, range, context),
+        provideCodeActions: (document, range) => this.provideCodeActions(document, range),
       }, {
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
       }),
     );
   }
 
-  private provideCodeActions(document: vscode.TextDocument, range: vscode.Range | vscode.Selection, context: vscode.CodeActionContext): vscode.CodeAction[] {
+  private provideCodeActions(document: vscode.TextDocument, range: vscode.Range | vscode.Selection): vscode.CodeAction[] {
     const allDiagnostics = this.getExtensionDiagnostics(document.uri);
     const fixableDiagnostics = allDiagnostics.filter(
       d => !this.isNonFixableDiagnostic(d) && this.rangesOverlap(d.range, range),
@@ -575,7 +575,6 @@ class ExtensionRuntime {
     revealDocumentAfterSuccess: boolean;
   }): Promise<void> {
     this.analysisCoordinator.beginAnalysis(options.uri.toString());
-    this.analysisCoordinator.markAnalysisStage(options.uri.toString(), 'Submitting analysis request...');
 
     try {
       const result = await this.sendAnalyzeRequest(options.analyzeRequest);
@@ -906,19 +905,15 @@ class ExtensionRuntime {
 
       const messages = this.buildLLMProxyMessages(request);
 
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Sending request to Copilot...');
       const response = await model.sendRequest(messages, {}, cts.token);
 
-      const text = await this.collectStreamedResponseText(response, request.uri);
+      const text = await this.collectStreamedResponseText(response);
 
       if (!text.trim()) {
         const error = 'Language model returned an empty response.';
         this.outputChannel.appendLine(`[LLM Proxy] Error: ${error}`);
         return { text: '', error };
       }
-
-      this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Processing Copilot response...');
-
       return { text };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -938,20 +933,12 @@ class ExtensionRuntime {
 
   private async collectStreamedResponseText(
     response: vscode.LanguageModelChatResponse,
-    analysisUri: string,
   ): Promise<string> {
-    this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, 'Streaming Copilot response...');
 
     let text = '';
-    let chunkCount = 0;
     for await (const part of response.text) {
       text += part;
-      chunkCount += 1;
-      if (chunkCount <= 3 || chunkCount % 10 === 0) {
-        this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Streaming Copilot response (chunk ${chunkCount})...`);
-      }
     }
-
     return text;
   }
 }
