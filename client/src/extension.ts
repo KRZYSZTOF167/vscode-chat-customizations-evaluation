@@ -179,12 +179,6 @@ class ExtensionRuntime {
     if (!this.client) {
       return;
     }
-
-    this.client.onNotification('chatCustomizationsEvaluations/contentStale', (_params: { uri: string }) => {
-      this.logTelemetryUsage('analysis/contentStaleNotificationShown');
-      void vscode.window.showInformationMessage('Content is stale. Run Analyze to update diagnostics.');
-    });
-
     this.client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
       this.outputChannel.appendLine('[LLM Proxy] Received request from server');
       try {
