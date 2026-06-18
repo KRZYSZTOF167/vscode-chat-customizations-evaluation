@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
+import { NON_FIXABLE_DIAGNOSTIC_CODES } from './strings';
 
 interface DiagnosticEdit {
-  fullDocument: boolean;
   ranges: vscode.Range[];
 }
 
@@ -11,12 +11,11 @@ export class DiagnosticsManager {
   private readonly pendingDiagnosticEditsByUri = new Map<string, DiagnosticEdit>();
   private readonly nonFixableDiagnosticCodeSet: Set<string>;
 
-  constructor(
-    collectionName: string,
-    nonFixableDiagnosticCodes: readonly string[],
-  ) {
-    this.diagnosticCollection = vscode.languages.createDiagnosticCollection(collectionName);
-    this.nonFixableDiagnosticCodeSet = new Set(nonFixableDiagnosticCodes);
+  private static collectionName = 'chat-customizations-evaluations-client';
+
+  constructor() {
+    this.diagnosticCollection = vscode.languages.createDiagnosticCollection(DiagnosticsManager.collectionName);
+    this.nonFixableDiagnosticCodeSet = new Set(NON_FIXABLE_DIAGNOSTIC_CODES);
   }
 
   initialize(context: vscode.ExtensionContext): void {
@@ -91,9 +90,9 @@ export class DiagnosticsManager {
     existing: DiagnosticEdit,
     contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
   ): DiagnosticEdit {
-    const hasFullDocumentEdit = existing.fullDocument || contentChanges.some(change => !change.range);
+    const hasFullDocumentEdit = contentChanges.some(change => !change.range);
     if (hasFullDocumentEdit) {
-      return { fullDocument: true, ranges: [] };
+      return { ranges: [] };
     }
 
     const nextRanges = existing.ranges.slice();
@@ -104,7 +103,6 @@ export class DiagnosticsManager {
     }
 
     return {
-      fullDocument: false,
       ranges: nextRanges,
     };
   }
@@ -113,10 +111,6 @@ export class DiagnosticsManager {
     diagnostics: readonly vscode.Diagnostic[],
     edit: DiagnosticEdit,
   ): vscode.Diagnostic[] {
-    if (edit.fullDocument) {
-      return [];
-    }
-
     if (edit.ranges.length === 0) {
       return diagnostics.slice();
     }
