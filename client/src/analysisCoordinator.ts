@@ -47,7 +47,6 @@ export class AnalysisCoordinator {
             options.logTelemetryUsage(resultEventName, { outcome: 'noActiveEditor' });
             return;
         }
-
         if (this.isAnalysisRunning(uri)) {
             options.logTelemetryUsage(resultEventName, { outcome: 'alreadyRunning' });
             return;
