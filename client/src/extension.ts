@@ -35,7 +35,7 @@ class ExtensionRuntime {
 
   private static readonly LLM_REQUEST_TIMEOUT_MS = 30_000;
 
-  private client: LanguageClient | undefined;
+  private client!: LanguageClient;
   private outputChannel!: vscode.OutputChannel;
   private modelPicker!: ModelPicker;
   private extensionContext!: vscode.ExtensionContext;
@@ -43,6 +43,7 @@ class ExtensionRuntime {
   private analysisCoordinator!: AnalysisCoordinator;
   private fixDiagnosticsCoordinator!: FixDiagnosticsCoordinator;
   private diagnosticsManager!: DiagnosticsManager;
+
   private readonly urlResolver = new UrlResolver();
   private readonly skillContextResolver = new SkillContextResolver(this.urlResolver);
 
@@ -61,17 +62,17 @@ class ExtensionRuntime {
 
     this.registerLanguageClientHandlers();
     this.registerCommands(context);
-    context.subscriptions.push(...registerWazaCommands(context));
     this.registerCodeActionProvider(context);
     this.registerWorkspaceHandlers(context);
     this.registerModelHandlers(context);
     this.startLanguageClient();
+    context.subscriptions.push(...registerWazaCommands(context));
 
     console.log('Chat Customizations Evaluations extension activated');
   }
 
   deactivate(): Thenable<void> | undefined {
-    this.analysisCoordinator?.dispose();
+    this.analysisCoordinator.dispose();
     this.logTelemetryUsage('extension/deactivate');
     this.telemetryLogger?.dispose();
     if (!this.client) {
@@ -83,22 +84,16 @@ class ExtensionRuntime {
   private initializeCoreServices(context: vscode.ExtensionContext): void {
     this.extensionContext = context;
     this.outputChannel = vscode.window.createOutputChannel('Chat Customizations Evaluations');
-    this.diagnosticsManager = new DiagnosticsManager();
-    this.diagnosticsManager.initialize(context);
-
-    this.analysisCoordinator = new AnalysisCoordinator(
-      this.diagnosticsManager,
-      (request) => this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', request),
-    );
-    this.analysisCoordinator.initialize(context);
+    this.diagnosticsManager = new DiagnosticsManager(context);
+    this.analysisCoordinator = new AnalysisCoordinator(context, this.diagnosticsManager, this.client);
     this.fixDiagnosticsCoordinator = new FixDiagnosticsCoordinator({
       diagnosticsManager: this.diagnosticsManager,
       resolveSkillContextForUri: (uri) => this.skillContextResolver.resolveSkillContext({ uri }),
       logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
     });
     this.modelPicker = new ModelPicker(this.outputChannel);
-
     this.telemetryLogger = this.createExtensionTelemetryLogger(context);
+
     context.subscriptions.push(this.telemetryLogger);
     this.logTelemetryUsage('extension/activate', { workspaceFolderCount: vscode.workspace.workspaceFolders?.length ?? 0 });
   }
@@ -121,11 +116,7 @@ class ExtensionRuntime {
     const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
     return {
       run: { module: serverModule, transport: TransportKind.ipc },
-      debug: {
-        module: serverModule,
-        transport: TransportKind.ipc,
-        options: debugOptions,
-      },
+      debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions },
     };
   }
 
@@ -158,7 +149,6 @@ class ExtensionRuntime {
       middleware: {
         handleDiagnostics: (uri, diagnostics, next) => {
           this.diagnosticsManager.handleLanguageClientDiagnostics(uri, diagnostics);
-
           // Prevent duplicate display by routing diagnostics through the client-owned collection.
           next(uri, []);
         },
@@ -168,9 +158,6 @@ class ExtensionRuntime {
   }
 
   private registerLanguageClientHandlers(): void {
-    if (!this.client) {
-      return;
-    }
     this.client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
       this.outputChannel.appendLine('[LLM Proxy] Received request from server');
       try {
@@ -234,23 +221,23 @@ class ExtensionRuntime {
 
   private registerWorkspaceHandlers(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
-      vscode.languages.onDidChangeDiagnostics((e) => {
-        this.analysisCoordinator?.handleDiagnosticsChanged(e.uris);
-      }),
-      vscode.workspace.onDidChangeTextDocument((event) => {
-        if (event.contentChanges.length === 0) {
-          return;
-        }
-        const removedCount = this.diagnosticsManager.handleDocumentChange(event);
-        if (removedCount > 0) {
-          this.outputChannel.appendLine(`[Diagnostics] Removed ${removedCount} touched diagnostics for ${event.document.uri.fsPath}`);
-        }
-      }),
-      vscode.workspace.onDidCloseTextDocument((document) => {
-        this.diagnosticsManager.handleDocumentClosed(document.uri);
-        this.analysisCoordinator?.handleDocumentClosed(document.uri);
-      }),
+      vscode.languages.onDidChangeDiagnostics((e) => this.onDidChangeDiagnostics(e)),
+      vscode.workspace.onDidChangeTextDocument((event) => this.onDidChangeTextDocument(event)),
+      vscode.workspace.onDidCloseTextDocument((document) => this.onDidCloseTextDocument(document)),
     );
+  }
+
+  private onDidChangeDiagnostics(e: vscode.DiagnosticChangeEvent): void {
+    this.analysisCoordinator.handleDiagnosticsChanged(e.uris);
+  }
+
+  private onDidChangeTextDocument(event: vscode.TextDocumentChangeEvent): void {
+    this.diagnosticsManager.handleDocumentChange(event);
+  }
+
+  private onDidCloseTextDocument(document: vscode.TextDocument): void {
+    this.diagnosticsManager.handleDocumentClosed(document.uri);
+    this.analysisCoordinator?.handleDocumentClosed(document.uri);
   }
 
   private registerModelHandlers(context: vscode.ExtensionContext): void {
@@ -332,7 +319,7 @@ class ExtensionRuntime {
     if (!uri) {
       this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
       this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
-      void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
+      vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
       return;
     }
 
@@ -365,9 +352,7 @@ class ExtensionRuntime {
       }
 
       const messages = this.buildLLMProxyMessages(request);
-
       const response = await model.sendRequest(messages, {}, cts.token);
-
       const text = await this.collectStreamedResponseText(response);
 
       if (!text.trim()) {
@@ -395,7 +380,6 @@ class ExtensionRuntime {
   private async collectStreamedResponseText(
     response: vscode.LanguageModelChatResponse,
   ): Promise<string> {
-
     let text = '';
     for await (const part of response.text) {
       text += part;
