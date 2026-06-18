@@ -10,6 +10,8 @@ import { DiagnosticsManager } from './diagnosticsManager';
 
 export class AnalysisCoordinator {
 
+    private static readonly MAX_PREVIOUS_DIAGNOSTICS = 10;
+
     private readonly urisWithDiagnostics = new Set<string>();
     private readonly pendingAnalysisUris = new Set<string>();
     private readonly analysisSnapshotsByUri = new Map<string, AnalysisSnapshot>();
@@ -92,10 +94,6 @@ export class AnalysisCoordinator {
             }
         }
         this.updateHasDiagnosticsContext();
-    }
-
-    handleDocumentContentChanged(uri: vscode.Uri): void {
-        this.previousDiagnosticMessagesByUri.delete(uri.toString());
     }
 
     handleDocumentClosed(uri: vscode.Uri): void {
@@ -246,6 +244,9 @@ export class AnalysisCoordinator {
                 existing.push(message);
                 existingSet.add(message);
             }
+        }
+        if (existing.length > AnalysisCoordinator.MAX_PREVIOUS_DIAGNOSTICS) {
+            existing.splice(0, existing.length - AnalysisCoordinator.MAX_PREVIOUS_DIAGNOSTICS);
         }
         this.previousDiagnosticMessagesByUri.set(uriKey, existing);
     }
