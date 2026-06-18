@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
 import { ACTION_ANALYZE_AGAIN } from './strings';
-import type { SkillContext, TelemetryData } from './types';
+import type { SkillContext } from './types';
 import { DiagnosticsManager } from './diagnosticsManager';
 import { handlePostFixDiagnosticsFlow } from './waza/waza';
 
 interface FixDiagnosticsCoordinatorOptions {
   diagnosticsManager: DiagnosticsManager;
   resolveSkillContextForUri: (uri: vscode.Uri) => SkillContext | undefined;
-  logTelemetryUsage: (eventName: string, data?: TelemetryData) => void;
 }
 
 export class FixDiagnosticsCoordinator {
@@ -19,10 +18,8 @@ export class FixDiagnosticsCoordinator {
   ) { }
 
   async handleFixDiagnosticsCommand(scopedDiagnostics?: vscode.Diagnostic[]): Promise<void> {
-    this.options.logTelemetryUsage('command/fixDiagnostics');
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-      this.options.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
       return;
     }
 
@@ -36,7 +33,6 @@ export class FixDiagnosticsCoordinator {
       const diagnostics = this.getSortedDiagnostics(targetUri);
 
       if (diagnostics.length === 0) {
-        this.options.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
         void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
         return;
       }
@@ -56,21 +52,15 @@ export class FixDiagnosticsCoordinator {
       FixDiagnosticsCoordinator.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
     );
     if (!hasImprovements) {
-      this.options.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
       return;
     }
 
     const skillContext = this.options.resolveSkillContextForUri(targetUri);
     if (!skillContext) {
-      this.options.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
       return;
     }
 
     await handlePostFixDiagnosticsFlow(skillContext);
-    this.options.logTelemetryUsage('command/fixDiagnostics/result', {
-      outcome: 'success',
-      diagnosticsCount: fixableDiagnostics.length,
-    });
   }
 
   private getSortedDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
@@ -89,7 +79,6 @@ export class FixDiagnosticsCoordinator {
       return false;
     }
 
-    this.options.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
     const action = await vscode.window.showInformationMessage(
       'Implement suggestions is unavailable for LLM analysis error diagnostics. Run Analyze again.',
       ACTION_ANALYZE_AGAIN,
