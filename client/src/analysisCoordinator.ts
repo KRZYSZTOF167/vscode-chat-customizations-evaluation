@@ -154,7 +154,7 @@ export class AnalysisCoordinator {
         const diagnostics = this.getSortedDiagnostics(uri);
 
         (async () => {
-            const message = `Analysis of ${filename} complete in ${result.duration} seconds: ${this.formatIssueSummary(result.resultCount)}.`;
+            const message = `Analysis of ${filename} complete in ${Math.floor(result.duration / 1000)} seconds: ${this.formatIssueSummary(result.resultCount)}.`;
             const hasErrorDiagnostics = diagnostics.some(diagnostic => this.diagnosticsManager.hasErrorDiagnostics(diagnostic));
             const actions = hasErrorDiagnostics ? [ACTION_ANALYZE_AGAIN] : [ACTION_FIX_DIAGNOSTICS];
             const action = await vscode.window.showInformationMessage(message, ...actions);
